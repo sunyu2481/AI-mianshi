@@ -28,18 +28,20 @@
       <button
         type="button"
         class="record-btn"
-        :class="{ idle: !isRecording, recording: isRecording }"
+        :class="{ idle: !isRecording && !recorder.isTranscribing.value, recording: isRecording, transcribing: recorder.isTranscribing.value }"
         :aria-label="isRecording ? '结束录音' : '开始录音'"
         :aria-pressed="isRecording"
+        :disabled="recorder.isTranscribing.value"
         @click="toggleRecording"
       >
         <el-icon :size="32">
-          <Microphone v-if="!isRecording" />
+          <Loading v-if="recorder.isTranscribing.value" class="spin-icon" />
+          <Microphone v-else-if="!isRecording" />
           <VideoPause v-else />
         </el-icon>
       </button>
       <p class="record-hint">
-        {{ isRecording ? '点击结束作答' : '点击开始作答' }}
+        {{ recorder.isTranscribing.value ? '正在转写...' : (isRecording ? '点击结束作答' : '点击开始作答') }}
       </p>
     </div>
 
@@ -48,6 +50,19 @@
       <h4>作答内容</h4>
       <div v-if="recorder.isTranscribing.value" class="transcribing-hint">
         正在转写语音，请稍候...
+      </div>
+      <!-- 转写错误提示与重试 -->
+      <div v-if="recorder.error.value && !recorder.isTranscribing.value" class="transcribe-error">
+        <span class="error-text">{{ recorder.error.value }}</span>
+        <el-button
+          v-if="recorder.lastAudioBlob.value"
+          type="warning"
+          size="small"
+          :loading="recorder.isTranscribing.value"
+          @click="handleRetryTranscribe"
+        >
+          重新转写
+        </el-button>
       </div>
       <el-input
         v-model="transcript"
@@ -74,7 +89,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Microphone, VideoPause, Back } from '@element-plus/icons-vue'
+import { Microphone, VideoPause, Back, Loading } from '@element-plus/icons-vue'
 import { useTimer } from '@/composables/useTimer'
 import { useRecorder } from '@/composables/useRecorder'
 import { useAppStore } from '@/store/app'
@@ -127,9 +142,11 @@ async function toggleRecording() {
       ElMessage.error('无法启动录音，请检查麦克风权限')
     }
   } else {
-    const result = await recorder.stop()
+    // 先停止计时器，确保时长准确
     isRecording.value = false
     timer.stop()
+    const recordedDuration = timer.seconds.value
+    const result = await recorder.stop()
     // recorder 内部已经处理了文本追加，直接同步最终值
     transcript.value = recorder.transcript.value
   }
@@ -142,9 +159,10 @@ async function submitAnswer() {
   }
 
   if (isRecording.value) {
-    const result = await recorder.stop()
+    // 先停止计时器，确保时长准确
     isRecording.value = false
     timer.stop()
+    const result = await recorder.stop()
     transcript.value = recorder.transcript.value
   }
 
@@ -152,6 +170,13 @@ async function submitAnswer() {
     transcript: transcript.value,
     duration: timer.seconds.value
   })
+}
+
+async function handleRetryTranscribe() {
+  const result = await recorder.retryTranscribe()
+  if (result) {
+    transcript.value = recorder.transcript.value
+  }
 }
 
 onMounted(() => {
@@ -240,6 +265,42 @@ onMounted(() => {
   0% { box-shadow: 0 0 0 0 rgba(245, 108, 108, 0.7); }
   70% { box-shadow: 0 0 0 25px rgba(245, 108, 108, 0); }
   100% { box-shadow: 0 0 0 0 rgba(245, 108, 108, 0); }
+}
+
+.record-btn.transcribing {
+  background: #e6a23c;
+  color: #fff;
+  cursor: wait;
+}
+
+.record-btn:disabled {
+  cursor: wait;
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.transcribe-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: #fef0f0;
+  border-radius: 4px;
+  border: 1px solid #fde2e2;
+}
+
+.transcribe-error .error-text {
+  color: #f56c6c;
+  font-size: 14px;
+  flex: 1;
 }
 
 .record-hint {

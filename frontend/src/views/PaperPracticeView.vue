@@ -139,6 +139,19 @@
           :rows="4"
           placeholder="作答内容..."
         />
+        <!-- 转写错误提示与重试 -->
+        <div v-if="recorder.error.value && !recorder.isTranscribing.value" class="transcribe-error">
+          <span class="error-text">{{ recorder.error.value }}</span>
+          <el-button
+            v-if="recorder.lastAudioBlob.value"
+            type="warning"
+            size="small"
+            :loading="recorder.isTranscribing.value"
+            @click="handleRetryTranscribe"
+          >
+            重新转写
+          </el-button>
+        </div>
       </div>
 
       <!-- 操作按钮 -->
@@ -397,13 +410,22 @@ async function toggleRecording() {
       ElMessage.error('无法启动录音')
     }
   } else {
-    const result = await recorder.stop()
+    // 先停止计时器，确保时长准确
     practiceStore.isRecording = false
     questionTimer.pause()
+    const result = await recorder.stop()
 
     if (result.transcript) {
       currentTranscript.value += result.transcript
     }
+  }
+}
+
+// 重试转写
+async function handleRetryTranscribe() {
+  const result = await recorder.retryTranscribe()
+  if (result) {
+    currentTranscript.value += result
   }
 }
 
@@ -852,5 +874,22 @@ onMounted(async () => {
   0% { box-shadow: 0 0 0 0 rgba(245, 108, 108, 0.7); }
   70% { box-shadow: 0 0 0 20px rgba(245, 108, 108, 0); }
   100% { box-shadow: 0 0 0 0 rgba(245, 108, 108, 0); }
+}
+
+.transcribe-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #fef0f0;
+  border-radius: 4px;
+  border: 1px solid #fde2e2;
+}
+
+.transcribe-error .error-text {
+  color: #f56c6c;
+  font-size: 14px;
+  flex: 1;
 }
 </style>

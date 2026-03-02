@@ -15,6 +15,7 @@ export function useRecorder() {
   const transcript = ref('')
   const error = ref<string | null>(null)
   const isTranscribing = ref(false)
+  const lastAudioBlob = ref<Blob | null>(null)
 
   let recognition: SpeechRecognition | null = null
   let mediaRecorder: MediaRecorder | null = null
@@ -157,6 +158,11 @@ export function useRecorder() {
         mediaRecorder = null
         isRecording.value = false
 
+        // 保存音频 Blob 供重试使用
+        if (audioBlob.size > 0) {
+          lastAudioBlob.value = audioBlob
+        }
+
         // 上传到 Whisper API
         if (audioBlob.size > 0) {
           isTranscribing.value = true
@@ -176,6 +182,7 @@ export function useRecorder() {
             )
 
             transcript.value = sessionBaseText + response.transcript
+            error.value = null
             resolve({ transcript: response.transcript, duration })
           } catch (e: unknown) {
             const axiosError = e as { response?: { data?: { detail?: string } } }
@@ -217,6 +224,48 @@ export function useRecorder() {
     }
   }
 
+  // 重试转写（使用保存的音频 Blob）
+  async function retryTranscribe(): Promise<string> {
+    if (!lastAudioBlob.value) {
+      error.value = '没有可重试的录音数据'
+      return ''
+    }
+
+    error.value = null
+    isTranscribing.value = true
+
+    try {
+      const formData = new FormData()
+      formData.append('file', lastAudioBlob.value, 'recording.webm')
+
+      const response = await request.post<any, { transcript: string }>(
+        '/speech/transcribe',
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          },
+          timeout: 120000
+        }
+      )
+
+      transcript.value = sessionBaseText + response.transcript
+      error.value = null
+      return response.transcript
+    } catch (e: unknown) {
+      const axiosError = e as { response?: { data?: { detail?: string } } }
+      error.value = axiosError.response?.data?.detail || '转写失败，请重试'
+      return ''
+    } finally {
+      isTranscribing.value = false
+    }
+  }
+
+  // 清除错误
+  function clearError() {
+    error.value = null
+  }
+
   // 清理
   onUnmounted(() => {
     if (recognition) {
@@ -234,7 +283,10 @@ export function useRecorder() {
     isTranscribing,
     transcript,
     error,
+    lastAudioBlob,
     start,
-    stop
+    stop,
+    retryTranscribe,
+    clearError
   }
 }
