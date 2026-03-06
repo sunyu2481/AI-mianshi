@@ -205,6 +205,51 @@
             <el-button @click="fetchModels" :loading="fetchingModels">获取模型</el-button>
           </div>
         </el-form-item>
+        <el-divider>生成参数</el-divider>
+        <el-form-item label="最大输出 Token">
+          <el-input-number
+            v-model="modelForm.max_output_tokens"
+            :min="1024"
+            :max="65536"
+            :step="1024"
+            style="width: 100%"
+          />
+          <div class="form-tip">
+            控制 AI 回复的最大长度。如遇输出截断，请增大此值。默认 8192。
+          </div>
+        </el-form-item>
+        <el-form-item label="Temperature">
+          <div class="slider-row">
+            <el-slider
+              v-model="modelForm.temperature"
+              :min="0"
+              :max="2"
+              :step="0.1"
+              :show-tooltip="true"
+              style="flex: 1"
+            />
+            <span class="slider-value">{{ modelForm.temperature }}</span>
+          </div>
+          <div class="form-tip">
+            值越高回复越有创意，越低越稳定。推荐 0.7。
+          </div>
+        </el-form-item>
+        <el-form-item label="Top P">
+          <div class="slider-row">
+            <el-slider
+              v-model="modelForm.top_p"
+              :min="0"
+              :max="1"
+              :step="0.05"
+              :show-tooltip="true"
+              style="flex: 1"
+            />
+            <span class="slider-value">{{ modelForm.top_p }}</span>
+          </div>
+          <div class="form-tip">
+            核采样参数，与 Temperature 配合使用。推荐 0.95。
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="closeModelDialog">取消</el-button>
@@ -278,7 +323,10 @@ const modelForm = reactive({
   role: 'analyze',
   base_url: '',
   api_key: '',
-  model_name: ''
+  model_name: '',
+  max_output_tokens: 8192,
+  temperature: 0.7,
+  top_p: 0.95
 })
 
 // 加载模型配置
@@ -343,7 +391,10 @@ function editModel(model: ModelConfig) {
     role: model.role,
     base_url: model.base_url,
     api_key: '',
-    model_name: model.model_name
+    model_name: model.model_name,
+    max_output_tokens: model.max_output_tokens ?? 8192,
+    temperature: model.temperature ?? 0.7,
+    top_p: model.top_p ?? 0.95
   })
   showAddModel.value = true
 }
@@ -368,10 +419,16 @@ async function saveModel() {
         base_url: string
         model_name: string
         api_key?: string
+        max_output_tokens: number
+        temperature: number
+        top_p: number
       } = {
         name: modelForm.name,
         base_url: modelForm.base_url,
-        model_name: modelForm.model_name
+        model_name: modelForm.model_name,
+        max_output_tokens: modelForm.max_output_tokens,
+        temperature: modelForm.temperature,
+        top_p: modelForm.top_p
       }
       if (modelForm.api_key) {
         updateData.api_key = modelForm.api_key
@@ -425,7 +482,10 @@ function closeModelDialog() {
     role: 'analyze',
     base_url: '',
     api_key: '',
-    model_name: ''
+    model_name: '',
+    max_output_tokens: 8192,
+    temperature: 0.7,
+    top_p: 0.95
   })
   availableModels.value = []
 }
@@ -610,5 +670,20 @@ onMounted(() => {
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+}
+
+.slider-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: #409eff;
+  min-width: 36px;
+  text-align: right;
 }
 </style>

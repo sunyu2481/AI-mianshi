@@ -45,3 +45,19 @@ async def init_db():
             await conn.execute(text(
                 "ALTER TABLE speech_configs ADD COLUMN whisper_model VARCHAR(100) DEFAULT 'whisper-1'"
             ))
+
+        # 为 model_configs 表添加 LLM 参数列
+        mc_columns = await conn.run_sync(lambda c: _get_columns(c, 'model_configs'))
+        if mc_columns is not None:
+            if 'max_output_tokens' not in mc_columns:
+                await conn.execute(text(
+                    "ALTER TABLE model_configs ADD COLUMN max_output_tokens INTEGER DEFAULT 8192"
+                ))
+            if 'temperature' not in mc_columns:
+                await conn.execute(text(
+                    "ALTER TABLE model_configs ADD COLUMN temperature FLOAT DEFAULT 0.7"
+                ))
+            if 'top_p' not in mc_columns:
+                await conn.execute(text(
+                    "ALTER TABLE model_configs ADD COLUMN top_p FLOAT DEFAULT 0.95"
+                ))

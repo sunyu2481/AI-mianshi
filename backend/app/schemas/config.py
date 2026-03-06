@@ -9,6 +9,9 @@ class ModelConfigBase(BaseModel):
     api_key: str
     model_name: str
     role: str  # "analyze" | "import"
+    max_output_tokens: Optional[int] = 8192
+    temperature: Optional[float] = 0.7
+    top_p: Optional[float] = 0.95
 
 
 class ModelConfigCreate(ModelConfigBase):
@@ -21,6 +24,9 @@ class ModelConfigUpdate(BaseModel):
     api_key: Optional[str] = None
     model_name: Optional[str] = None
     is_active: Optional[bool] = None
+    max_output_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
 
 
 class ModelConfigResponse(BaseModel):
@@ -30,6 +36,9 @@ class ModelConfigResponse(BaseModel):
     model_name: str
     role: str
     is_active: bool
+    max_output_tokens: Optional[int] = 8192
+    temperature: Optional[float] = 0.7
+    top_p: Optional[float] = 0.95
     api_key_masked: Optional[str] = None
     created_at: datetime
     updated_at: datetime

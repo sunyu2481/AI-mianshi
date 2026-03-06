@@ -7,6 +7,9 @@ export interface ModelConfig {
   model_name: string
   role: string
   is_active: boolean
+  max_output_tokens?: number
+  temperature?: number
+  top_p?: number
   api_key_masked?: string
   created_at: string
   updated_at: string

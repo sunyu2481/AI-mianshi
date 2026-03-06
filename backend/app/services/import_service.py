@@ -52,7 +52,9 @@ class ImportService:
         response = await client.chat(
             system_prompt="你是一个专业的题目解析助手，请严格按照 JSON 格式输出。",
             user_message=user_message,
-            temperature=0.3
+            temperature=0.3,
+            max_tokens=model_config.max_output_tokens or 8192,
+            top_p=model_config.top_p or 0.95
         )
 
         # 尝试解析 JSON
@@ -96,7 +98,9 @@ class ImportService:
         response = await client.chat(
             system_prompt="你是一个专业的题目解析助手，请严格按照 JSON 格式输出。",
             user_message=user_message,
-            temperature=0.3
+            temperature=0.3,
+            max_tokens=model_config.max_output_tokens or 8192,
+            top_p=model_config.top_p or 0.95
         )
 
         # 尝试解析 JSON

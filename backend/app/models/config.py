@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, Float
 from datetime import datetime
 from ..core.database import Base
 
@@ -12,6 +12,9 @@ class ModelConfig(Base):
     api_key = Column(String(500), nullable=False)
     model_name = Column(String(100), nullable=False)
     role = Column(String(20), nullable=False)  # "analyze" | "import"
+    max_output_tokens = Column(Integer, default=8192)
+    temperature = Column(Float, default=0.7)
+    top_p = Column(Float, default=0.95)
     is_active = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

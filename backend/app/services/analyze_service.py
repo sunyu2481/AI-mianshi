@@ -58,7 +58,10 @@ class AnalyzeService:
 
         response = await client.chat(
             system_prompt="你是一位资深的公务员面试考官。",
-            user_message=user_message
+            user_message=user_message,
+            temperature=model_config.temperature or 0.7,
+            max_tokens=model_config.max_output_tokens or 8192,
+            top_p=model_config.top_p or 0.95
         )
 
         return {
@@ -94,7 +97,10 @@ class AnalyzeService:
 
         async for chunk in client.chat_stream(
             system_prompt="你是一位资深的公务员面试考官。",
-            user_message=user_message
+            user_message=user_message,
+            temperature=model_config.temperature or 0.7,
+            max_tokens=model_config.max_output_tokens or 8192,
+            top_p=model_config.top_p or 0.95
         ):
             yield chunk
 
@@ -122,7 +128,10 @@ class AnalyzeService:
 
         response = await client.chat(
             system_prompt="你是一位资深的公务员面试教练。",
-            user_message=user_message
+            user_message=user_message,
+            temperature=model_config.temperature or 0.7,
+            max_tokens=model_config.max_output_tokens or 8192,
+            top_p=model_config.top_p or 0.95
         )
 
         return {
@@ -157,7 +166,10 @@ class AnalyzeService:
 
         response = await client.chat(
             system_prompt="你是一位资深的公务员面试考官。",
-            user_message=user_message
+            user_message=user_message,
+            temperature=model_config.temperature or 0.7,
+            max_tokens=model_config.max_output_tokens or 8192,
+            top_p=model_config.top_p or 0.95
         )
 
         return {
@@ -192,6 +204,9 @@ class AnalyzeService:
 
         async for chunk in client.chat_stream(
             system_prompt="你是一位资深的公务员面试考官。",
-            user_message=user_message
+            user_message=user_message,
+            temperature=model_config.temperature or 0.7,
+            max_tokens=model_config.max_output_tokens or 8192,
+            top_p=model_config.top_p or 0.95
         ):
             yield chunk

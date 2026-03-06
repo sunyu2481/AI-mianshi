@@ -23,7 +23,8 @@ class AIClient:
         system_prompt: str,
         user_message: str,
         temperature: float = 0.7,
-        max_tokens: int = 4096
+        max_tokens: int = 4096,
+        top_p: float = 0.95
     ) -> str:
         """发送对话请求"""
         try:
@@ -34,7 +35,8 @@ class AIClient:
                     {"role": "user", "content": user_message}
                 ],
                 temperature=temperature,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                top_p=top_p
             )
             return response.choices[0].message.content
         except APITimeoutError:
@@ -49,7 +51,8 @@ class AIClient:
         system_prompt: str,
         user_message: str,
         temperature: float = 0.7,
-        max_tokens: int = 4096
+        max_tokens: int = 4096,
+        top_p: float = 0.95
     ) -> AsyncIterator[str]:
         """流式对话，逐块返回内容"""
         try:
@@ -61,6 +64,7 @@ class AIClient:
                 ],
                 temperature=temperature,
                 max_tokens=max_tokens,
+                top_p=top_p,
                 stream=True
             )
             async for chunk in response:
