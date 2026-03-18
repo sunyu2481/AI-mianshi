@@ -46,3 +46,5 @@ class PaperResponse(PaperBase):
 class PaperListResponse(BaseModel):
     items: list[PaperResponse]
     total: int
+    page: int
+    page_size: int

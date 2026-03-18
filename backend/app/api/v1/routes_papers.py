@@ -1,15 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
+
 from ...core.database import get_db
 from ...models.paper import Paper, PaperItem
 from ...models.question import Question
 from ...schemas.paper import (
     PaperCreate,
-    PaperUpdate,
+    PaperListResponse,
     PaperResponse,
-    PaperListResponse
+    PaperUpdate,
 )
 
 router = APIRouter(prefix="/papers", tags=["套卷管理"])
@@ -17,32 +18,48 @@ router = APIRouter(prefix="/papers", tags=["套卷管理"])
 
 @router.get("", response_model=PaperListResponse)
 async def list_papers(
-    db: AsyncSession = Depends(get_db)
+    page: int = Query(1, ge=1),
+    page_size: int = Query(12, ge=1, le=100),
+    keyword: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
 ):
-    """获取套卷列表"""
-    result = await db.execute(
-        select(Paper)
-        .options(selectinload(Paper.items))
-        .order_by(Paper.created_at.desc())
-    )
+    """分页获取套卷列表，支持多词筛选。"""
+    query = select(Paper).options(selectinload(Paper.items))
+    count_query = select(func.count(Paper.id))
+
+    keywords = [item.strip().lower() for item in (keyword or "").split() if item.strip()]
+    for item in keywords:
+        pattern = f"%{item}%"
+        filter_condition = or_(
+            func.lower(Paper.title).like(pattern),
+            func.lower(func.coalesce(Paper.description, "")).like(pattern),
+        )
+        query = query.where(filter_condition)
+        count_query = count_query.where(filter_condition)
+
+    query = query.order_by(Paper.created_at.desc())
+    query = query.offset((page - 1) * page_size).limit(page_size)
+
+    result = await db.execute(query)
     papers = result.scalars().all()
 
-    count_result = await db.execute(select(func.count(Paper.id)))
-    total = count_result.scalar()
+    count_result = await db.execute(count_query)
+    total = count_result.scalar() or 0
 
     return PaperListResponse(
         items=[PaperResponse.model_validate(p) for p in papers],
-        total=total
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
 @router.post("", response_model=PaperResponse)
 async def create_paper(
     data: PaperCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """新建套卷"""
-    # 验证题目存在性
+    """新建套卷。"""
     if data.question_ids:
         result = await db.execute(
             select(Question.id).where(Question.id.in_(data.question_ids))
@@ -52,31 +69,29 @@ async def create_paper(
         if missing_ids:
             raise HTTPException(
                 status_code=400,
-                detail=f"以下题目不存在: {sorted(missing_ids)}"
+                detail=f"以下题目不存在: {sorted(missing_ids)}",
             )
 
     paper = Paper(
         title=data.title,
         description=data.description,
-        time_limit_seconds=data.time_limit_seconds
+        time_limit_seconds=data.time_limit_seconds,
     )
     db.add(paper)
     await db.flush()
 
-    # 添加题目
     if data.question_ids:
-        for idx, qid in enumerate(data.question_ids):
+        for idx, question_id in enumerate(data.question_ids, start=1):
             item = PaperItem(
                 paper_id=paper.id,
-                question_id=qid,
-                sort_order=idx + 1
+                question_id=question_id,
+                sort_order=idx,
             )
             db.add(item)
 
     await db.commit()
     await db.refresh(paper)
 
-    # 重新加载关联
     result = await db.execute(
         select(Paper)
         .options(selectinload(Paper.items))
@@ -90,9 +105,9 @@ async def create_paper(
 @router.get("/{paper_id}", response_model=PaperResponse)
 async def get_paper(
     paper_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """获取套卷详情"""
+    """获取套卷详情。"""
     result = await db.execute(
         select(Paper)
         .options(selectinload(Paper.items))
@@ -108,12 +123,10 @@ async def get_paper(
 async def update_paper(
     paper_id: int,
     data: PaperUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """更新套卷"""
-    result = await db.execute(
-        select(Paper).where(Paper.id == paper_id)
-    )
+    """更新套卷。"""
+    result = await db.execute(select(Paper).where(Paper.id == paper_id))
     paper = result.scalar_one_or_none()
     if not paper:
         raise HTTPException(status_code=404, detail="套卷不存在")
@@ -130,12 +143,10 @@ async def update_paper(
 @router.delete("/{paper_id}")
 async def delete_paper(
     paper_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """删除套卷"""
-    result = await db.execute(
-        select(Paper).where(Paper.id == paper_id)
-    )
+    """删除套卷。"""
+    result = await db.execute(select(Paper).where(Paper.id == paper_id))
     paper = result.scalar_one_or_none()
     if not paper:
         raise HTTPException(status_code=404, detail="套卷不存在")
@@ -149,34 +160,26 @@ async def delete_paper(
 async def add_paper_item(
     paper_id: int,
     question_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """添加题目到套卷"""
-    # 检查套卷
-    result = await db.execute(
-        select(Paper).where(Paper.id == paper_id)
-    )
+    """向套卷追加题目。"""
+    result = await db.execute(select(Paper).where(Paper.id == paper_id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="套卷不存在")
 
-    # 检查题目
-    result = await db.execute(
-        select(Question).where(Question.id == question_id)
-    )
+    result = await db.execute(select(Question).where(Question.id == question_id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="题目不存在")
 
-    # 获取当前最大排序
     max_order_result = await db.execute(
-        select(func.max(PaperItem.sort_order))
-        .where(PaperItem.paper_id == paper_id)
+        select(func.max(PaperItem.sort_order)).where(PaperItem.paper_id == paper_id)
     )
     max_order = max_order_result.scalar() or 0
 
     item = PaperItem(
         paper_id=paper_id,
         question_id=question_id,
-        sort_order=max_order + 1
+        sort_order=max_order + 1,
     )
     db.add(item)
     await db.commit()
@@ -187,13 +190,13 @@ async def add_paper_item(
 async def remove_paper_item(
     paper_id: int,
     item_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """从套卷移除题目"""
+    """从套卷移除题目。"""
     result = await db.execute(
         select(PaperItem).where(
             PaperItem.id == item_id,
-            PaperItem.paper_id == paper_id
+            PaperItem.paper_id == paper_id,
         )
     )
     item = result.scalar_one_or_none()

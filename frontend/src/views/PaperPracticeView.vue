@@ -3,21 +3,28 @@
     <h2 class="page-title">套卷练习</h2>
 
     <!-- 步骤1: 选择套卷 -->
-    <div v-if="step === 'select'" class="page-card">
+    <div v-if="step === 'select'" v-loading="loadingPapers" class="page-card">
       <h3>选择练习套卷</h3>
 
       <el-input
-        v-if="papers.length > 0"
+        v-if="papers.length > 0 || paperSearchKeyword"
         v-model="paperSearchKeyword"
         class="paper-search"
-        placeholder="搜索套题试卷"
+        placeholder="搜索套题试卷，支持多词空格筛选"
         clearable
-      />
+        @input="schedulePaperSearch"
+        @clear="handlePaperSearch"
+        @keyup.enter="handlePaperSearch"
+      >
+        <template #append>
+          <el-button @click="handlePaperSearch">搜索</el-button>
+        </template>
+      </el-input>
 
       <!-- 从题库选择 -->
-      <div class="paper-list" v-if="filteredPapers.length > 0">
+      <div class="paper-list" v-if="papers.length > 0">
         <div
-          v-for="paper in filteredPapers"
+          v-for="paper in papers"
           :key="paper.id"
           class="paper-item"
           @click="selectPaper(paper)"
@@ -26,13 +33,28 @@
             <span class="paper-title">{{ paper.title }}</span>
             <span class="paper-meta">{{ paper.items.length }} 道题 | 默认 {{ formatTime(paper.time_limit_seconds) }}</span>
           </div>
-          <el-icon><ArrowRight /></el-icon>
+          <div class="paper-actions">
+            <el-button text type="danger" size="small" @click.stop="deletePaper(paper)">
+              删除
+            </el-button>
+            <el-icon><ArrowRight /></el-icon>
+          </div>
         </div>
       </div>
 
+      <el-pagination
+        v-if="totalPapers > 0"
+        v-model:current-page="paperCurrentPage"
+        class="paper-pagination"
+        :page-size="paperPageSize"
+        :total="totalPapers"
+        layout="prev, pager, next"
+        @current-change="loadPapers"
+      />
+
       <el-empty
         v-else
-        :description="papers.length === 0 ? '暂无套卷，请先在题库中创建' : '未找到匹配的套题试卷'"
+        :description="paperSearchKeyword ? '未找到匹配的套题试卷' : '暂无套卷，请先在题库中创建'"
       />
 
       <!-- 自定义套卷 -->
@@ -81,6 +103,19 @@
             <el-input-number v-model="practiceTimeLimitMinutes" :min="1" :max="180" />
           </el-form-item>
         </el-form>
+        <div v-if="pendingQuestions.length > 0" class="start-config-questions">
+          <div class="start-config-questions-title">本套题题目</div>
+          <el-scrollbar max-height="240px">
+            <div
+              v-for="(question, index) in pendingQuestions"
+              :key="question.id"
+              class="start-config-question-item"
+            >
+              <span class="start-config-question-index">{{ index + 1 }}.</span>
+              <span class="start-config-question-content">{{ question.content }}</span>
+            </div>
+          </el-scrollbar>
+        </div>
         <template #footer>
           <el-button @click="showStartPracticeConfig = false">取消</el-button>
           <el-button type="primary" @click="confirmStartPractice">
@@ -237,7 +272,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowRight, Plus, Microphone, VideoPause, Loading } from '@element-plus/icons-vue'
@@ -268,6 +303,10 @@ interface PracticePaperAnswer {
 const step = ref<'select' | 'practice' | 'result'>('select')
 const papers = ref<Paper[]>([])
 const paperSearchKeyword = ref('')
+const loadingPapers = ref(false)
+const paperCurrentPage = ref(1)
+const paperPageSize = ref(12)
+const totalPapers = ref(0)
 const showCustomPaper = ref(false)
 const showStartPracticeConfig = ref(false)
 const customPaperTitle = ref('自定义练习套卷')
@@ -288,6 +327,7 @@ const activePaperId = ref<number>()
 const activePaperTitle = ref('套卷练习')
 const practiceStartedAt = ref('')
 const resumePaperTimerAfterTranscription = ref(false)
+let paperSearchTimer: number | undefined
 
 // 安全的 HTML 输出 (防 XSS)
 const safeAnalysisHtml = computed(() => {
@@ -319,17 +359,6 @@ const streamHtml = computed(() => {
     .replace(/##\s*(.*)/g, '<h3>$1</h3>')
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\n/g, '<br>')
-})
-
-const filteredPapers = computed(() => {
-  const keyword = paperSearchKeyword.value.trim().toLowerCase()
-  if (!keyword) return papers.value
-
-  return papers.value.filter((paper) => {
-    const matchedTitle = paper.title.toLowerCase().includes(keyword)
-    const matchedDescription = paper.description?.toLowerCase().includes(keyword)
-    return matchedTitle || matchedDescription
-  })
 })
 
 // 格式化时间
@@ -376,26 +405,49 @@ function confirmStartPractice() {
 
 // 加载套卷列表
 async function loadPapers() {
+  loadingPapers.value = true
   try {
-    const data = await paperApi.list()
+    const data = await paperApi.list({
+      page: paperCurrentPage.value,
+      page_size: paperPageSize.value,
+      keyword: paperSearchKeyword.value.trim() || undefined
+    })
     papers.value = data.items
+    totalPapers.value = data.total
   } catch (e) {
     console.error('加载套卷失败', e)
+  } finally {
+    loadingPapers.value = false
   }
+}
+
+function handlePaperSearch() {
+  window.clearTimeout(paperSearchTimer)
+  paperCurrentPage.value = 1
+  loadPapers()
+}
+
+function schedulePaperSearch() {
+  window.clearTimeout(paperSearchTimer)
+  paperSearchTimer = window.setTimeout(() => {
+    handlePaperSearch()
+  }, 300)
 }
 
 // 选择套卷
 async function selectPaper(paper: Paper) {
-  // 加载套卷题目
-  const questions: Question[] = []
-  for (const item of paper.items) {
-    try {
-      const q = await questionApi.get(item.question_id)
-      questions.push(q)
-    } catch (e) {
-      console.error('加载题目失败', e)
-    }
-  }
+  const sortedItems = [...paper.items].sort((a, b) => a.sort_order - b.sort_order)
+  const results = await Promise.all(
+    sortedItems.map(async (item) => {
+      try {
+        return await questionApi.get(item.question_id)
+      } catch (e) {
+        console.error('加载题目失败', e)
+        return null
+      }
+    })
+  )
+  const questions = results.filter((question): question is Question => question !== null)
 
   if (questions.length === 0) {
     ElMessage.warning('套卷中没有题目')
@@ -406,6 +458,34 @@ async function selectPaper(paper: Paper) {
     paperId: paper.id,
     paperTitle: paper.title
   })
+}
+
+async function deletePaper(paper: Paper) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除试卷「${paper.title}」吗？删除后不可恢复。`,
+      '删除确认',
+      {
+        confirmButtonText: '确定删除',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+
+    await paperApi.delete(paper.id)
+    ElMessage.success('试卷已删除')
+
+    if (papers.value.length === 1 && paperCurrentPage.value > 1) {
+      paperCurrentPage.value -= 1
+    }
+
+    await loadPapers()
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') {
+      return
+    }
+    console.error('删除试卷失败', e)
+  }
 }
 
 // 开始自定义套卷
@@ -813,15 +893,17 @@ onMounted(async () => {
     const ids = questionIdsParam.split(',').map(Number)
     const timeLimit = Number(timeLimitParam) || 900
 
-    const questions: Question[] = []
-    for (const id of ids) {
-      try {
-        const q = await questionApi.get(id)
-        questions.push(q)
-      } catch (e) {
-        console.error('加载题目失败', e)
-      }
-    }
+    const results = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          return await questionApi.get(id)
+        } catch (e) {
+          console.error('加载题目失败', e)
+          return null
+        }
+      })
+    )
+    const questions = results.filter((question): question is Question => question !== null)
 
     if (questions.length > 0) {
       preparePracticeStart(questions, timeLimit, {
@@ -831,6 +913,10 @@ onMounted(async () => {
       ElMessage.error('题目加载失败')
     }
   }
+})
+
+onUnmounted(() => {
+  window.clearTimeout(paperSearchTimer)
 })
 </script>
 
@@ -851,6 +937,11 @@ onMounted(async () => {
   margin-bottom: 16px;
 }
 
+.paper-pagination {
+  justify-content: center;
+  margin-top: 20px;
+}
+
 .paper-item {
   display: flex;
   justify-content: space-between;
@@ -864,6 +955,12 @@ onMounted(async () => {
 
 .paper-item:hover {
   background: #e6f0ff;
+}
+
+.paper-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .paper-info {
@@ -906,6 +1003,38 @@ onMounted(async () => {
   margin-top: 6px;
   font-size: 13px;
   color: #909399;
+}
+
+.start-config-questions {
+  margin-top: 8px;
+}
+
+.start-config-questions-title {
+  margin-bottom: 10px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #606266;
+}
+
+.start-config-question-item {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: #f5f7fa;
+  border-radius: 8px;
+  line-height: 1.7;
+}
+
+.start-config-question-index {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: #409eff;
+}
+
+.start-config-question-content {
+  color: #303133;
+  white-space: pre-wrap;
 }
 
 .question-nav {

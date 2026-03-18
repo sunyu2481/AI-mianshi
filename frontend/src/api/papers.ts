@@ -10,9 +10,16 @@ export interface Paper {
   updated_at: string
 }
 
+export interface PaperListResponse {
+  items: Paper[]
+  total: number
+  page: number
+  page_size: number
+}
+
 export const paperApi = {
-  list() {
-    return request.get<any, { items: Paper[]; total: number }>('/papers')
+  list(params?: { page?: number; page_size?: number; keyword?: string }) {
+    return request.get<any, PaperListResponse>('/papers', { params })
   },
 
   get(id: number) {
