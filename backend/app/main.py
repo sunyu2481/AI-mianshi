@@ -12,6 +12,7 @@ from .models.answer import Answer
 from .models.analysis import AnalysisResult
 from .models.config import ModelConfig, Prompt, SpeechConfig, SystemConfig
 from .models.import_task import ImportTask
+from .models.paper_session import PaperSession
 
 # 导入路由
 from .api.v1.routes_questions import router as questions_router

@@ -2,7 +2,6 @@
   <div class="history">
     <h2 class="page-title">历史记录</h2>
 
-    <!-- 切换标签 -->
     <div class="page-card">
       <el-radio-group v-model="activeTab" @change="loadHistory">
         <el-radio-button label="single">单题练习</el-radio-button>
@@ -10,13 +9,11 @@
       </el-radio-group>
     </div>
 
-    <!-- 趋势图 -->
     <div class="page-card">
       <h3>分数趋势</h3>
       <div ref="chartRef" class="trend-chart"></div>
     </div>
 
-    <!-- 历史列表 -->
     <div class="page-card">
       <div class="history-header">
         <h3>练习记录</h3>
@@ -33,33 +30,57 @@
       <el-skeleton v-if="loading" :rows="5" animated />
 
       <template v-else>
-        <el-empty v-if="Object.keys(historyData).length === 0" description="暂无练习记录" />
+        <el-empty v-if="isHistoryEmpty" description="暂无练习记录" />
 
         <div v-else class="history-list">
-          <div v-for="(records, date) in historyData" :key="date" class="date-group">
-            <div class="date-header">{{ date }}</div>
-            <div class="records">
-              <div
-                v-for="record in records"
-                :key="record.id"
-                class="record-item"
-              >
-                <el-checkbox
-                  :model-value="selectedIds.includes(record.id)"
-                  @change="toggleSelect(record.id)"
-                />
-                <div class="record-content" @click="viewRecord(record)">
-                  <div class="record-question">{{ truncate(record.question_content, 60) }}</div>
-                  <div class="record-meta">
-                    <span>用时: {{ formatDuration(record.duration_seconds) }}</span>
+          <template v-if="activeTab === 'single'">
+            <div v-for="(records, date) in singleHistoryData" :key="date" class="date-group">
+              <div class="date-header">{{ date }}</div>
+              <div class="records">
+                <div v-for="record in records" :key="record.id" class="record-item">
+                  <el-checkbox
+                    :model-value="selectedIds.includes(String(record.id))"
+                    @change="toggleSelect(record.id)"
+                  />
+                  <div class="record-content" @click="viewSingleRecord(record)">
+                    <div class="record-question">{{ truncate(record.question_content, 60) }}</div>
+                    <div class="record-meta">
+                      <span>用时: {{ formatDuration(record.duration_seconds) }}</span>
+                    </div>
                   </div>
-                </div>
-                <div class="record-score" :class="getScoreClass(record.analysis?.score)">
-                  {{ record.analysis?.score ?? '-' }}
+                  <div class="record-score" :class="getScoreClass(record.analysis?.score)">
+                    {{ record.analysis?.score ?? '-' }}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          </template>
+
+          <template v-else>
+            <div v-for="(records, date) in paperHistoryData" :key="date" class="date-group">
+              <div class="date-header">{{ date }}</div>
+              <div class="records">
+                <div v-for="record in records" :key="record.paper_session_id" class="record-item">
+                  <el-checkbox
+                    :model-value="selectedIds.includes(record.paper_session_id)"
+                    @change="toggleSelect(record.paper_session_id)"
+                  />
+                  <div class="record-content" @click="viewPaperRecord(record)">
+                    <div class="record-question">{{ record.paper_title }}</div>
+                    <div class="record-meta">
+                      <span>{{ record.question_count }} 道题</span>
+                      <span>总用时: {{ formatDuration(record.total_duration_seconds) }}</span>
+                      <span v-if="record.time_limit_seconds">限时: {{ formatDuration(record.time_limit_seconds) }}</span>
+                    </div>
+                    <div class="paper-preview">{{ formatPaperPreview(record) }}</div>
+                  </div>
+                  <div class="record-score" :class="getScoreClass(record.analysis_score)">
+                    {{ record.analysis_score ?? '-' }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
         </div>
       </template>
 
@@ -74,29 +95,78 @@
       />
     </div>
 
-    <!-- 记录详情弹窗 -->
-    <el-dialog v-model="showDetailDialog" title="练习详情" width="90%" style="max-width: 700px">
-      <template v-if="selectedRecord">
+    <el-dialog
+      v-model="showDetailDialog"
+      :title="activeTab === 'single' ? '练习详情' : '套题详情'"
+      width="90%"
+      style="max-width: 800px"
+    >
+      <template v-if="activeTab === 'single' && selectedSingleRecord">
         <div class="detail-section">
           <h4>题目</h4>
-          <p>{{ selectedRecord.question_content }}</p>
+          <p>{{ selectedSingleRecord.question_content }}</p>
         </div>
         <div class="detail-section">
           <h4>我的作答</h4>
-          <p>{{ selectedRecord.transcript }}</p>
+          <p>{{ selectedSingleRecord.transcript }}</p>
         </div>
         <div class="detail-section">
           <h4>用时</h4>
-          <p>{{ formatDuration(selectedRecord.duration_seconds) }}</p>
+          <p>{{ formatDuration(selectedSingleRecord.duration_seconds) }}</p>
         </div>
-        <div v-if="selectedRecord.analysis" class="detail-section">
-          <h4>AI 分析 (得分: {{ selectedRecord.analysis.score }})</h4>
-          <div class="analysis-content markdown-content" v-html="formatMarkdown(selectedRecord.analysis.feedback || '')"></div>
+        <div v-if="selectedSingleRecord.analysis" class="detail-section">
+          <h4>AI 分析 (得分: {{ selectedSingleRecord.analysis.score }})</h4>
+          <div
+            class="analysis-content markdown-content"
+            v-html="formatMarkdown(selectedSingleRecord.analysis.feedback || '')"
+          ></div>
+        </div>
+      </template>
+
+      <template v-else-if="activeTab === 'paper' && selectedPaperRecord">
+        <div class="detail-section">
+          <h4>套题信息</h4>
+          <p>{{ selectedPaperRecord.paper_title }}</p>
+        </div>
+        <div class="detail-section">
+          <h4>练习概况</h4>
+          <p>
+            {{ selectedPaperRecord.question_count }} 道题 |
+            总用时 {{ formatDuration(selectedPaperRecord.total_duration_seconds) }}
+            <span v-if="selectedPaperRecord.time_limit_seconds">
+              | 限时 {{ formatDuration(selectedPaperRecord.time_limit_seconds) }}
+            </span>
+          </p>
+        </div>
+        <div
+          v-for="(answer, index) in selectedPaperRecord.answers"
+          :key="answer.id"
+          class="detail-section"
+        >
+          <h4>第 {{ index + 1 }} 题</h4>
+          <p class="detail-question">{{ answer.question_content }}</p>
+          <p>{{ answer.transcript || '未作答' }}</p>
+          <p class="detail-answer-meta">用时: {{ formatDuration(answer.duration_seconds) }}</p>
+        </div>
+        <div v-if="selectedPaperRecord.analysis_feedback" class="detail-section">
+          <h4>
+            AI 整套分析
+            <span v-if="selectedPaperRecord.analysis_score !== undefined">
+              (得分: {{ selectedPaperRecord.analysis_score }})
+            </span>
+          </h4>
+          <div
+            class="analysis-content markdown-content"
+            v-html="formatMarkdown(selectedPaperRecord.analysis_feedback)"
+          ></div>
+        </div>
+        <div v-else class="detail-section">
+          <h4>AI 整套分析</h4>
+          <p>该套题暂无整体 AI 分析。</p>
         </div>
       </template>
     </el-dialog>
 
-    <!-- AI 分析结果弹窗 -->
     <el-dialog v-model="showAnalysisDialog" title="AI 综合分析" width="90%" style="max-width: 800px">
       <el-skeleton v-if="analyzing" :rows="10" animated />
       <div v-else class="analysis-content markdown-content" v-html="formatMarkdown(analysisResult)"></div>
@@ -105,9 +175,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import * as echarts from 'echarts'
-import { historyApi, answerApi, type AnswerWithAnalysis } from '@/api/answers'
+import { historyApi, answerApi, type AnswerWithAnalysis, type PaperSessionHistoryRecord } from '@/api/answers'
 
 const activeTab = ref<'single' | 'paper'>('single')
 const loading = ref(false)
@@ -115,9 +185,11 @@ const analyzing = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
-const historyData = ref<Record<string, AnswerWithAnalysis[]>>({})
-const selectedIds = ref<number[]>([])
-const selectedRecord = ref<AnswerWithAnalysis | null>(null)
+const singleHistoryData = ref<Record<string, AnswerWithAnalysis[]>>({})
+const paperHistoryData = ref<Record<string, PaperSessionHistoryRecord[]>>({})
+const selectedIds = ref<string[]>([])
+const selectedSingleRecord = ref<AnswerWithAnalysis | null>(null)
+const selectedPaperRecord = ref<PaperSessionHistoryRecord | null>(null)
 const showDetailDialog = ref(false)
 const showAnalysisDialog = ref(false)
 const analysisResult = ref('')
@@ -125,13 +197,16 @@ const chartRef = ref<HTMLElement | null>(null)
 
 let chartInstance: echarts.ECharts | null = null
 
-// 截断文本
+const isHistoryEmpty = computed(() => {
+  const source = activeTab.value === 'single' ? singleHistoryData.value : paperHistoryData.value
+  return Object.keys(source).length === 0
+})
+
 function truncate(text: string | undefined, length: number): string {
   if (!text) return ''
   return text.length > length ? text.slice(0, length) + '...' : text
 }
 
-// 格式化时长
 function formatDuration(seconds: number | undefined): string {
   if (!seconds) return '0秒'
   const mins = Math.floor(seconds / 60)
@@ -142,7 +217,6 @@ function formatDuration(seconds: number | undefined): string {
   return `${secs}秒`
 }
 
-// 分数样式
 function getScoreClass(score: number | undefined): string {
   if (score === undefined) return ''
   if (score >= 80) return 'good'
@@ -150,15 +224,13 @@ function getScoreClass(score: number | undefined): string {
   return 'poor'
 }
 
-// 格式化 Markdown (安全版本，防 XSS)
 function formatMarkdown(text: string): string {
-  // 先转义 HTML 特殊字符
   const escaped = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-  // 再应用简单 markdown 格式化
+
   return escaped
     .replace(/###\s*(.*)/g, '<h4>$1</h4>')
     .replace(/##\s*(.*)/g, '<h3>$1</h3>')
@@ -167,33 +239,33 @@ function formatMarkdown(text: string): string {
     .replace(/\n/g, '<br>')
 }
 
-// 加载历史记录
+function formatPaperPreview(record: PaperSessionHistoryRecord): string {
+  return record.answers
+    .slice(0, 2)
+    .map((answer, index) => `第 ${index + 1} 题：${truncate(answer.question_content, 24)}`)
+    .join(' | ')
+}
+
 async function loadHistory() {
   loading.value = true
   selectedIds.value = []
+  selectedSingleRecord.value = null
+  selectedPaperRecord.value = null
 
   try {
-    const api = activeTab.value === 'single' ? historyApi.getSingle : historyApi.getPaper
-    const data = await api({ page: currentPage.value, page_size: pageSize.value })
-
-    if (activeTab.value === 'paper') {
-      // 套卷模式：后端返回 { [date]: { [session_id]: { paper_title, answers: [...] } } }
-      // 需要展平为 { [date]: Answer[] } 以匹配渲染逻辑
-      const flatGrouped: Record<string, AnswerWithAnalysis[]> = {}
-      for (const [date, sessions] of Object.entries(data.items)) {
-        flatGrouped[date] = []
-        for (const sessionData of Object.values(sessions as Record<string, any>)) {
-          flatGrouped[date].push(...(sessionData.answers || []))
-        }
-      }
-      historyData.value = flatGrouped
+    if (activeTab.value === 'single') {
+      const data = await historyApi.getSingle({ page: currentPage.value, page_size: pageSize.value })
+      singleHistoryData.value = data.items
+      paperHistoryData.value = {}
+      total.value = data.total
     } else {
-      historyData.value = data.items
+      const data = await historyApi.getPaper({ page: currentPage.value, page_size: pageSize.value })
+      paperHistoryData.value = data.items
+      singleHistoryData.value = {}
+      total.value = data.total
     }
-    total.value = data.total
 
-    // 加载趋势图
-    loadTrends()
+    await loadTrends()
   } catch (e) {
     console.error('加载历史失败', e)
   } finally {
@@ -201,7 +273,6 @@ async function loadHistory() {
   }
 }
 
-// 加载趋势数据
 async function loadTrends() {
   try {
     const data = await historyApi.getTrends(activeTab.value, 30)
@@ -211,7 +282,6 @@ async function loadTrends() {
   }
 }
 
-// 更新图表
 function updateChart(trends: Array<{ date: string; avg_score: number; count: number }>) {
   if (!chartRef.value) return
 
@@ -248,23 +318,26 @@ function updateChart(trends: Array<{ date: string; avg_score: number; count: num
   chartInstance.setOption(option)
 }
 
-// 切换选择
-function toggleSelect(id: number) {
-  const index = selectedIds.value.indexOf(id)
+function toggleSelect(id: number | string) {
+  const key = String(id)
+  const index = selectedIds.value.indexOf(key)
   if (index > -1) {
     selectedIds.value.splice(index, 1)
   } else {
-    selectedIds.value.push(id)
+    selectedIds.value.push(key)
   }
 }
 
-// 查看记录详情
-function viewRecord(record: AnswerWithAnalysis) {
-  selectedRecord.value = record
+function viewSingleRecord(record: AnswerWithAnalysis) {
+  selectedSingleRecord.value = record
   showDetailDialog.value = true
 }
 
-// AI 综合分析
+function viewPaperRecord(record: PaperSessionHistoryRecord) {
+  selectedPaperRecord.value = record
+  showDetailDialog.value = true
+}
+
 async function analyzeSelected() {
   if (selectedIds.value.length === 0) return
 
@@ -272,9 +345,19 @@ async function analyzeSelected() {
   showAnalysisDialog.value = true
 
   try {
-    const analysisType = activeTab.value === 'single' ? 'history_single_analyze' : 'history_paper_analyze'
-    const result = await answerApi.historyAnalyze(selectedIds.value, analysisType)
-    analysisResult.value = result.feedback
+    if (activeTab.value === 'single') {
+      const result = await answerApi.historyAnalyze(
+        selectedIds.value.map(id => Number(id)),
+        'history_single_analyze'
+      )
+      analysisResult.value = result.feedback
+    } else {
+      const result = await answerApi.historyAnalyzePaper(
+        selectedIds.value,
+        'history_paper_analyze'
+      )
+      analysisResult.value = result.feedback
+    }
   } catch (e) {
     analysisResult.value = '分析失败，请稍后重试'
   } finally {
@@ -338,9 +421,15 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 15px;
-  padding: 12px 15px;
+  padding: 15px;
   background: #f5f7fa;
   border-radius: 8px;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.record-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
 }
 
 .record-content {
@@ -349,46 +438,74 @@ onUnmounted(() => {
 }
 
 .record-question {
-  font-size: 14px;
-  color: #303133;
-  margin-bottom: 4px;
+  font-size: 15px;
+  font-weight: 500;
+  margin-bottom: 6px;
 }
 
 .record-meta {
-  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 13px;
   color: #909399;
+}
+
+.paper-preview {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #606266;
 }
 
 .record-score {
-  font-size: 24px;
-  font-weight: bold;
+  min-width: 56px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 700;
   color: #909399;
-  min-width: 50px;
-  text-align: right;
 }
 
-.record-score.good { color: #67c23a; }
-.record-score.medium { color: #e6a23c; }
-.record-score.poor { color: #f56c6c; }
+.record-score.good {
+  color: #67c23a;
+}
+
+.record-score.medium {
+  color: #e6a23c;
+}
+
+.record-score.poor {
+  color: #f56c6c;
+}
 
 .detail-section {
   margin-bottom: 20px;
 }
 
 .detail-section h4 {
-  color: #909399;
-  margin-bottom: 8px;
+  margin: 0 0 10px;
 }
 
 .detail-section p {
+  margin: 0;
   line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.detail-question {
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.detail-answer-meta {
+  margin-top: 8px !important;
+  color: #909399;
+  font-size: 13px;
 }
 
 .analysis-content {
-  max-height: 400px;
-  overflow-y: auto;
-  padding: 15px;
+  padding: 18px;
   background: #f5f7fa;
   border-radius: 8px;
+  line-height: 1.8;
 }
 </style>

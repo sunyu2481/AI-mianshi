@@ -6,23 +6,34 @@
     <div v-if="step === 'select'" class="page-card">
       <h3>选择练习套卷</h3>
 
+      <el-input
+        v-if="papers.length > 0"
+        v-model="paperSearchKeyword"
+        class="paper-search"
+        placeholder="搜索套题试卷"
+        clearable
+      />
+
       <!-- 从题库选择 -->
-      <div class="paper-list" v-if="papers.length > 0">
+      <div class="paper-list" v-if="filteredPapers.length > 0">
         <div
-          v-for="paper in papers"
+          v-for="paper in filteredPapers"
           :key="paper.id"
           class="paper-item"
           @click="selectPaper(paper)"
         >
           <div class="paper-info">
             <span class="paper-title">{{ paper.title }}</span>
-            <span class="paper-meta">{{ paper.items.length }} 道题 | {{ formatTime(paper.time_limit_seconds) }}</span>
+            <span class="paper-meta">{{ paper.items.length }} 道题 | 默认 {{ formatTime(paper.time_limit_seconds) }}</span>
           </div>
           <el-icon><ArrowRight /></el-icon>
         </div>
       </div>
 
-      <el-empty v-else description="暂无套卷，请先在题库中创建" />
+      <el-empty
+        v-else
+        :description="papers.length === 0 ? '暂无套卷，请先在题库中创建' : '未找到匹配的套题试卷'"
+      />
 
       <!-- 自定义套卷 -->
       <el-divider>或</el-divider>
@@ -57,6 +68,26 @@
           </el-button>
         </template>
       </el-dialog>
+
+      <el-dialog v-model="showStartPracticeConfig" title="开始套卷练习" width="90%" style="max-width: 520px">
+        <div class="start-config-summary">
+          <div class="start-config-title">{{ pendingPaperTitle }}</div>
+          <div class="start-config-meta">
+            {{ pendingQuestions.length }} 道题 | 默认 {{ formatTime(pendingTimeLimitSeconds) }}
+          </div>
+        </div>
+        <el-form label-position="top">
+          <el-form-item label="本次练习时长（分钟）">
+            <el-input-number v-model="practiceTimeLimitMinutes" :min="1" :max="180" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="showStartPracticeConfig = false">取消</el-button>
+          <el-button type="primary" @click="confirmStartPractice">
+            开始练习
+          </el-button>
+        </template>
+      </el-dialog>
     </div>
 
     <!-- 步骤2: 练习中 -->
@@ -70,6 +101,9 @@
         >
           {{ paperTimer.formatted.value }}
         </span>
+        <div v-if="recorder.isTranscribing.value" class="timer-status">
+          转写中，已暂停总倒计时
+        </div>
       </div>
 
       <!-- 题目导航 -->
@@ -80,7 +114,8 @@
           class="nav-item"
           :class="{
             active: practiceStore.currentQuestionIndex === index,
-            answered: isQuestionAnswered(index)
+            answered: isQuestionAnswered(index),
+            disabled: practiceStore.isRecording || recorder.isTranscribing.value
           }"
           @click="switchQuestion(index)"
         >
@@ -156,7 +191,7 @@
 
       <!-- 操作按钮 -->
       <div class="action-buttons">
-        <el-button @click="confirmEnd">面试结束</el-button>
+        <el-button :disabled="recorder.isTranscribing.value" @click="confirmEnd">面试结束</el-button>
       </div>
     </div>
 
@@ -222,9 +257,19 @@ const paperTimer = useTimer('countdown', 0)
 const questionTimer = useTimer('countup')
 const recorder = useRecorder()
 
+interface PracticePaperAnswer {
+  questionId: number
+  transcript: string
+  duration: number
+  score?: number
+  answerId?: number
+}
+
 const step = ref<'select' | 'practice' | 'result'>('select')
 const papers = ref<Paper[]>([])
+const paperSearchKeyword = ref('')
 const showCustomPaper = ref(false)
+const showStartPracticeConfig = ref(false)
 const customPaperTitle = ref('自定义练习套卷')
 const customTimeLimit = ref(15)
 const customQuestions = ref('')
@@ -233,7 +278,16 @@ const isAnalyzing = ref(false)
 const isStreaming = ref(false)
 const streamContent = ref('')
 const paperAnalysis = ref('')
-const paperAnswers = ref<Array<{ questionId: number; transcript: string; duration: number; score?: number; answerId?: number }>>([])
+const paperAnswers = ref<PracticePaperAnswer[]>([])
+const pendingQuestions = ref<Question[]>([])
+const pendingPaperId = ref<number>()
+const pendingPaperTitle = ref('套卷练习')
+const pendingTimeLimitSeconds = ref(900)
+const practiceTimeLimitMinutes = ref(15)
+const activePaperId = ref<number>()
+const activePaperTitle = ref('套卷练习')
+const practiceStartedAt = ref('')
+const resumePaperTimerAfterTranscription = ref(false)
 
 // 安全的 HTML 输出 (防 XSS)
 const safeAnalysisHtml = computed(() => {
@@ -267,11 +321,57 @@ const streamHtml = computed(() => {
     .replace(/\n/g, '<br>')
 })
 
+const filteredPapers = computed(() => {
+  const keyword = paperSearchKeyword.value.trim().toLowerCase()
+  if (!keyword) return papers.value
+
+  return papers.value.filter((paper) => {
+    const matchedTitle = paper.title.toLowerCase().includes(keyword)
+    const matchedDescription = paper.description?.toLowerCase().includes(keyword)
+    return matchedTitle || matchedDescription
+  })
+})
+
 // 格式化时间
 function formatTime(seconds: number | undefined): string {
   if (!seconds) return '无限制'
   const mins = Math.floor(seconds / 60)
   return `${mins} 分钟`
+}
+
+function getDefaultPracticeMinutes(seconds?: number): number {
+  if (!seconds) return 15
+  return Math.max(1, Math.ceil(seconds / 60))
+}
+
+function getTotalDurationSeconds(): number {
+  return paperAnswers.value.reduce((total, answer) => total + (answer.duration || 0), 0)
+}
+
+function preparePracticeStart(
+  questions: Question[],
+  timeLimitSeconds: number,
+  options?: { paperId?: number; paperTitle?: string }
+) {
+  pendingQuestions.value = questions
+  pendingPaperId.value = options?.paperId
+  pendingPaperTitle.value = options?.paperTitle || '套卷练习'
+  pendingTimeLimitSeconds.value = timeLimitSeconds
+  practiceTimeLimitMinutes.value = getDefaultPracticeMinutes(timeLimitSeconds)
+  showStartPracticeConfig.value = true
+}
+
+function confirmStartPractice() {
+  if (pendingQuestions.value.length === 0) {
+    ElMessage.warning('题目加载失败，请重新选择')
+    return
+  }
+
+  showStartPracticeConfig.value = false
+  startPractice(pendingQuestions.value, practiceTimeLimitMinutes.value * 60, {
+    paperId: pendingPaperId.value,
+    paperTitle: pendingPaperTitle.value
+  })
 }
 
 // 加载套卷列表
@@ -302,7 +402,10 @@ async function selectPaper(paper: Paper) {
     return
   }
 
-  startPractice(questions, paper.time_limit_seconds || 900)
+  preparePracticeStart(questions, paper.time_limit_seconds || 900, {
+    paperId: paper.id,
+    paperTitle: paper.title
+  })
 }
 
 // 开始自定义套卷
@@ -332,8 +435,9 @@ async function startCustomPaper() {
   }
 
   // 保存套卷到数据库
+  let createdPaper: Paper | null = null
   try {
-    await paperApi.create({
+    createdPaper = await paperApi.create({
       title: customPaperTitle.value,
       time_limit_seconds: customTimeLimit.value * 60,
       question_ids: questionIds
@@ -344,17 +448,33 @@ async function startCustomPaper() {
   }
 
   showCustomPaper.value = false
-  startPractice(questions, customTimeLimit.value * 60)
+  startPractice(questions, customTimeLimit.value * 60, {
+    paperId: createdPaper?.id,
+    paperTitle: customPaperTitle.value.trim() || '自定义练习套卷'
+  })
 }
 
 // 开始练习
-function startPractice(questions: Question[], timeLimit: number) {
+function startPractice(
+  questions: Question[],
+  timeLimit: number,
+  options?: { paperId?: number; paperTitle?: string }
+) {
   practiceStore.resetPaper()
   practiceStore.mode = 'paper'
   practiceStore.paperSessionId = uuidv4()
   practiceStore.paperQuestions = questions
   practiceStore.paperTimeLimit = timeLimit
   practiceStore.currentQuestionIndex = 0
+  practiceStartedAt.value = new Date().toISOString()
+  activePaperId.value = options?.paperId
+  activePaperTitle.value = options?.paperTitle || '套卷练习'
+  currentTranscript.value = ''
+  streamContent.value = ''
+  paperAnalysis.value = ''
+  isAnalyzing.value = false
+  isStreaming.value = false
+  resumePaperTimerAfterTranscription.value = false
 
   // 初始化每题答案
   paperAnswers.value = questions.map(q => ({
@@ -366,6 +486,7 @@ function startPractice(questions: Question[], timeLimit: number) {
   // 设置倒计时
   paperTimer.reset(timeLimit)
   paperTimer.start()
+  questionTimer.reset()
 
   step.value = 'practice'
 }
@@ -380,8 +501,36 @@ function isQuestionAnswered(index: number): boolean {
   return !!paperAnswers.value[index]?.transcript
 }
 
+function pausePaperTimerForTranscription() {
+  resumePaperTimerAfterTranscription.value = step.value === 'practice' && paperTimer.isRunning.value
+  if (resumePaperTimerAfterTranscription.value) {
+    paperTimer.pause()
+  }
+}
+
+function resumePaperTimerIfNeeded() {
+  if (
+    resumePaperTimerAfterTranscription.value
+    && step.value === 'practice'
+    && !practiceStore.isRecording
+    && paperTimer.seconds.value > 0
+  ) {
+    paperTimer.start()
+  }
+  resumePaperTimerAfterTranscription.value = false
+}
+
 // 切换题目
 function switchQuestion(index: number) {
+  if (practiceStore.isRecording) {
+    ElMessage.warning('请先结束当前录音')
+    return
+  }
+  if (recorder.isTranscribing.value) {
+    ElMessage.warning('转写中，请稍候')
+    return
+  }
+
   // 保存当前题目的答案
   saveCurrentAnswer()
 
@@ -413,24 +562,39 @@ async function toggleRecording() {
     // 先停止计时器，确保时长准确
     practiceStore.isRecording = false
     questionTimer.pause()
-    const result = await recorder.stop()
+    pausePaperTimerForTranscription()
+    try {
+      const result = await recorder.stop()
 
-    if (result.transcript) {
-      currentTranscript.value += result.transcript
+      if (result.transcript) {
+        currentTranscript.value += result.transcript
+      }
+    } finally {
+      resumePaperTimerIfNeeded()
     }
   }
 }
 
 // 重试转写
 async function handleRetryTranscribe() {
-  const result = await recorder.retryTranscribe()
-  if (result) {
-    currentTranscript.value += result
+  pausePaperTimerForTranscription()
+  try {
+    const result = await recorder.retryTranscribe()
+    if (result) {
+      currentTranscript.value += result
+    }
+  } finally {
+    resumePaperTimerIfNeeded()
   }
 }
 
 // 确认结束
 async function confirmEnd() {
+  if (recorder.isTranscribing.value) {
+    ElMessage.warning('正在转写，请稍候再结束')
+    return
+  }
+
   try {
     await ElMessageBox.confirm('确定结束本次面试吗？', '提示', {
       confirmButtonText: '确定',
@@ -445,10 +609,20 @@ async function confirmEnd() {
 
 // 完成练习
 async function finishPractice() {
+  if (recorder.isTranscribing.value) {
+    ElMessage.warning('正在转写，请稍候')
+    return
+  }
+
   // 停止录音
   if (practiceStore.isRecording) {
-    await recorder.stop()
     practiceStore.isRecording = false
+    questionTimer.pause()
+    paperTimer.pause()
+    const result = await recorder.stop()
+    if (result.transcript) {
+      currentTranscript.value += result.transcript
+    }
   }
 
   // 保存当前答案
@@ -457,49 +631,66 @@ async function finishPractice() {
   questionTimer.stop()
 
   step.value = 'result'
-  isAnalyzing.value = true
-  isStreaming.value = true
   streamContent.value = ''
   paperAnalysis.value = ''
 
+  const finishedAt = new Date().toISOString()
+  const answeredQuestions = paperAnswers.value.filter(answer => answer.transcript.trim())
+  if (answeredQuestions.length === 0) {
+    isAnalyzing.value = false
+    isStreaming.value = false
+    paperAnalysis.value = '本次套题未检测到有效作答，未生成 AI 分析。'
+    return
+  }
+
+  isAnalyzing.value = true
+  isStreaming.value = true
+
   try {
     // 提交每道题的作答
-    const answerIds: number[] = []
     for (let i = 0; i < paperAnswers.value.length; i++) {
       const ans = paperAnswers.value[i]
       const question = practiceStore.paperQuestions[i]
 
-      if (ans.transcript) {
+      if (ans.transcript.trim()) {
         const answer = await answerApi.create({
           mode: 'paper',
           question_id: question.id,
+          paper_id: activePaperId.value,
           paper_session_id: practiceStore.paperSessionId,
           transcript: ans.transcript,
           duration_seconds: ans.duration,
-          started_at: new Date().toISOString(),
-          finished_at: new Date().toISOString()
+          started_at: practiceStartedAt.value || finishedAt,
+          finished_at: finishedAt
         })
 
-        answerIds.push(answer.id)
         paperAnswers.value[i].answerId = answer.id
-
-        // 触发单题分析（后台执行）
-        answerApi.analyze(answer.id).catch(console.error)
       }
     }
+
+    await answerApi.savePaperSession({
+      paper_session_id: practiceStore.paperSessionId,
+      paper_id: activePaperId.value,
+      paper_title: activePaperTitle.value,
+      time_limit_seconds: practiceStore.paperTimeLimit,
+      total_duration_seconds: getTotalDurationSeconds(),
+      question_count: practiceStore.paperQuestions.length,
+      started_at: practiceStartedAt.value || finishedAt,
+      finished_at: finishedAt
+    })
 
     // 调用套卷流式分析 API
     if (practiceStore.paperSessionId) {
       await startPaperStreamAnalysis(practiceStore.paperSessionId)
     } else {
-      paperAnalysis.value = '套卷分析已提交，各题分析结果可在历史记录中查看。'
+      paperAnalysis.value = '套卷分析已提交，可在历史记录中查看。'
       isAnalyzing.value = false
       isStreaming.value = false
     }
   } catch (e) {
     console.error('提交失败', e)
     ElMessage.error('提交失败')
-    paperAnalysis.value = '分析失败，请稍后在历史记录中查看各题结果。'
+    paperAnalysis.value = '分析失败，请稍后重试。'
     isAnalyzing.value = false
     isStreaming.value = false
   }
@@ -570,14 +761,18 @@ function reset() {
   questionTimer.reset()
   step.value = 'select'
   paperAnalysis.value = ''
+  streamContent.value = ''
   paperAnswers.value = []
   currentTranscript.value = ''
+  activePaperId.value = undefined
+  activePaperTitle.value = '套卷练习'
+  practiceStartedAt.value = ''
+  resumePaperTimerAfterTranscription.value = false
 }
 
 // 再次练习（保留题目，重置状态）
 function handleRetry() {
   const questions = [...practiceStore.paperQuestions]
-  const timeLimit = practiceStore.paperTimeLimit
 
   if (questions.length === 0) {
     ElMessage.warning('无法重试，题目信息丢失')
@@ -585,26 +780,10 @@ function handleRetry() {
     return
   }
 
-  // 生成新的会话ID，避免与上次作答数据混淆
-  practiceStore.paperSessionId = uuidv4()
-
-  paperTimer.reset(timeLimit)
-  paperTimer.start()
-  questionTimer.reset()
-  currentTranscript.value = ''
-
-  paperAnswers.value = questions.map(q => ({
-    questionId: q.id,
-    transcript: '',
-    duration: 0
-  }))
-
-  practiceStore.currentQuestionIndex = 0
-  isAnalyzing.value = false
-  isStreaming.value = false
-  streamContent.value = ''
-  paperAnalysis.value = ''
-  step.value = 'practice'
+  startPractice(questions, practiceStore.paperTimeLimit, {
+    paperId: activePaperId.value,
+    paperTitle: activePaperTitle.value
+  })
 }
 
 // 重新生成套卷分析
@@ -645,7 +824,9 @@ onMounted(async () => {
     }
 
     if (questions.length > 0) {
-      startPractice(questions, timeLimit)
+      preparePracticeStart(questions, timeLimit, {
+        paperTitle: '题库选题练习'
+      })
     } else {
       ElMessage.error('题目加载失败')
     }
@@ -664,6 +845,10 @@ onMounted(async () => {
   flex-direction: column;
   gap: 10px;
   margin-bottom: 20px;
+}
+
+.paper-search {
+  margin-bottom: 16px;
 }
 
 .paper-item {
@@ -702,6 +887,27 @@ onMounted(async () => {
   margin-bottom: 20px;
 }
 
+.timer-status {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #e6a23c;
+}
+
+.start-config-summary {
+  margin-bottom: 16px;
+}
+
+.start-config-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.start-config-meta {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #909399;
+}
+
 .question-nav {
   display: flex;
   justify-content: center;
@@ -729,6 +935,11 @@ onMounted(async () => {
 .nav-item.answered {
   background: #67c23a;
   color: #fff;
+}
+
+.nav-item.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .question-section {

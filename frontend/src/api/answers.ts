@@ -31,6 +31,31 @@ export interface AnswerWithAnalysis extends Answer {
   question_content?: string
 }
 
+export interface PaperSessionAnswerItem {
+  id: number
+  question_id: number
+  question_content?: string
+  transcript?: string
+  duration_seconds?: number
+}
+
+export interface PaperSessionHistoryRecord {
+  paper_session_id: string
+  paper_id?: number
+  paper_title: string
+  question_count: number
+  time_limit_seconds?: number
+  total_duration_seconds?: number
+  started_at: string
+  finished_at?: string
+  practice_date: string
+  analysis_score?: number
+  analysis_feedback?: string
+  model_name?: string
+  answer_ids: number[]
+  answers: PaperSessionAnswerItem[]
+}
+
 export const answerApi = {
   create(data: {
     mode: string
@@ -64,10 +89,30 @@ export const answerApi = {
     })
   },
 
+  historyAnalyzePaper(paper_session_ids: string[], analysis_type: string) {
+    return request.post<any, { feedback: string; model_name: string }>('/answers/history-analyze', {
+      paper_session_ids,
+      analysis_type
+    })
+  },
+
   analyzePaper(paper_session_id: string) {
     return request.post<any, { feedback: string; model_name: string }>('/answers/paper-analyze', {
       paper_session_id
     })
+  },
+
+  savePaperSession(data: {
+    paper_session_id: string
+    paper_id?: number
+    paper_title: string
+    time_limit_seconds?: number
+    total_duration_seconds?: number
+    question_count: number
+    started_at: string
+    finished_at?: string
+  }) {
+    return request.post('/answers/paper-session', data)
   }
 }
 
@@ -77,7 +122,7 @@ export const historyApi = {
   },
 
   getPaper(params: { page?: number; page_size?: number }) {
-    return request.get<any, any>('/history/paper', { params })
+    return request.get<any, { items: Record<string, PaperSessionHistoryRecord[]>; total: number; page: number; page_size: number }>('/history/paper', { params })
   },
 
   getTrends(mode: string = 'single', days: number = 30) {
