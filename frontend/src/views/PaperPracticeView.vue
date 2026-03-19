@@ -463,7 +463,7 @@ async function selectPaper(paper: Paper) {
 async function deletePaper(paper: Paper) {
   try {
     await ElMessageBox.confirm(
-      `确定删除试卷「${paper.title}」吗？删除后不可恢复。`,
+      `确定删除试卷「${paper.title}」吗？将同步删除试卷题目及相关练习记录，且不可恢复。`,
       '删除确认',
       {
         confirmButtonText: '确定删除',
@@ -473,7 +473,7 @@ async function deletePaper(paper: Paper) {
     )
 
     await paperApi.delete(paper.id)
-    ElMessage.success('试卷已删除')
+    ElMessage.success('试卷及关联数据已删除')
 
     if (papers.value.length === 1 && paperCurrentPage.value > 1) {
       paperCurrentPage.value -= 1

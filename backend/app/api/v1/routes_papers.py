@@ -4,7 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ...core.database import get_db
+from ...models.analysis import AnalysisResult
+from ...models.answer import Answer
 from ...models.paper import Paper, PaperItem
+from ...models.paper_session import PaperSession
 from ...models.question import Question
 from ...schemas.paper import (
     PaperCreate,
@@ -145,13 +148,90 @@ async def delete_paper(
     paper_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """删除套卷。"""
-    result = await db.execute(select(Paper).where(Paper.id == paper_id))
+    """删除套卷，并物理删除其独占题目及关联练习记录。"""
+    result = await db.execute(
+        select(Paper)
+        .options(selectinload(Paper.items))
+        .where(Paper.id == paper_id)
+    )
     paper = result.scalar_one_or_none()
     if not paper:
         raise HTTPException(status_code=404, detail="套卷不存在")
 
+    question_ids = [item.question_id for item in paper.items]
+    exclusive_question_ids: list[int] = []
+    questions_to_delete: list[Question] = []
+    answers_to_delete: list[Answer] = []
+    paper_sessions_to_delete: list[PaperSession] = []
+    analyses_to_delete: list[AnalysisResult] = []
+
+    if question_ids:
+        reusable_question_result = await db.execute(
+            select(PaperItem.question_id)
+            .where(
+                PaperItem.question_id.in_(question_ids),
+                PaperItem.paper_id != paper_id,
+            )
+        )
+        reusable_question_ids = {row[0] for row in reusable_question_result.all()}
+
+        exclusive_question_ids = [
+            question_id
+            for question_id in question_ids
+            if question_id not in reusable_question_ids
+        ]
+
+        if exclusive_question_ids:
+            question_result = await db.execute(
+                select(Question).where(Question.id.in_(exclusive_question_ids))
+            )
+            questions_to_delete = question_result.scalars().all()
+
+    answer_conditions = [Answer.paper_id == paper_id]
+    if exclusive_question_ids:
+        answer_conditions.append(Answer.question_id.in_(exclusive_question_ids))
+
+    answer_result = await db.execute(
+        select(Answer).where(or_(*answer_conditions))
+    )
+    answers_to_delete = answer_result.scalars().all()
+    answer_ids = [answer.id for answer in answers_to_delete]
+    paper_session_ids = {
+        answer.paper_session_id
+        for answer in answers_to_delete
+        if answer.paper_session_id
+    }
+
+    if answer_ids:
+        analysis_result = await db.execute(
+            select(AnalysisResult).where(AnalysisResult.answer_id.in_(answer_ids))
+        )
+        analyses_to_delete = analysis_result.scalars().all()
+
+    session_conditions = [PaperSession.paper_id == paper_id]
+    if paper_session_ids:
+        session_conditions.append(PaperSession.paper_session_id.in_(paper_session_ids))
+
+    paper_session_result = await db.execute(
+        select(PaperSession).where(or_(*session_conditions))
+    )
+    paper_sessions_to_delete = paper_session_result.scalars().all()
+
+    for analysis in analyses_to_delete:
+        await db.delete(analysis)
+
+    for answer in answers_to_delete:
+        await db.delete(answer)
+
+    for paper_session in paper_sessions_to_delete:
+        await db.delete(paper_session)
+
     await db.delete(paper)
+    await db.flush()
+
+    for question in questions_to_delete:
+        await db.delete(question)
+
     await db.commit()
     return {"message": "删除成功"}
 
