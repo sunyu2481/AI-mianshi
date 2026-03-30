@@ -529,7 +529,11 @@ npm exec vite build
 cd backend
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+## 致谢
+
+感谢 [Linux.do](https://linux.do) 社区的交流与支持，项目的许多想法和改进都来自社区成员的反馈。
 
 ## License
 
 仅供学习、练习和内部部署参考。
+
