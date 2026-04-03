@@ -14,13 +14,12 @@ function getBaseURL(): string {
   if (import.meta.env.VITE_API_BASE_URL) {
     return import.meta.env.VITE_API_BASE_URL
   }
-  // 开发环境使用代理
-  if (import.meta.env.DEV) {
-    return '/api/v1'
-  }
-  // 生产环境：使用当前域名的 8000 端口
-  const { protocol, hostname } = window.location
-  return `${protocol}//${hostname}:8000/api/v1`
+
+  // 默认使用同源 API，适用于：
+  // 1. Vite 开发代理
+  // 2. Nginx / Docker 反向代理
+  // 3. Windows EXE 内置本地服务
+  return '/api/v1'
 }
 
 const request = axios.create({

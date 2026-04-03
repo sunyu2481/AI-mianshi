@@ -1,6 +1,9 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from .core.config import settings
 from .core.database import init_db
 from .init_data import init_default_prompts
@@ -62,11 +65,54 @@ app.include_router(speech_router, prefix="/api/v1")
 app.include_router(import_router, prefix="/api/v1")
 
 
+def _frontend_index_file() -> Path:
+    return settings.FRONTEND_DIST_DIR / "index.html"
+
+
+def _frontend_ready() -> bool:
+    return _frontend_index_file().exists()
+
+
+def _resolve_frontend_file(relative_path: str) -> Path | None:
+    if not relative_path:
+        return None
+
+    frontend_root = settings.FRONTEND_DIST_DIR.resolve()
+    candidate = (frontend_root / relative_path).resolve()
+
+    try:
+        candidate.relative_to(frontend_root)
+    except ValueError:
+        return None
+
+    if candidate.is_file():
+        return candidate
+
+    return None
+
+
 @app.get("/")
 async def root():
+    if _frontend_ready():
+        return FileResponse(_frontend_index_file())
     return {"message": "AI面试助手 API", "version": "1.0.0"}
 
 
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+@app.get("/{full_path:path}")
+async def frontend_entry(full_path: str):
+    if not _frontend_ready():
+        raise HTTPException(status_code=404, detail="Frontend build files not found")
+
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="API route not found")
+
+    file_path = _resolve_frontend_file(full_path)
+    if file_path is not None:
+        return FileResponse(file_path)
+
+    return FileResponse(_frontend_index_file())

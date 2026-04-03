@@ -16,8 +16,10 @@ __pycache__/
 *$py.class
 venv/
 .venv/
+build/
 backend/venv/
 backend/__pycache__/
+*.log
 
 # Database
 *.db
@@ -38,3 +40,4 @@ uploads/
 backend/uploads/
 .ace-tool/
 nul
+AIInterviewAssistantDebug.spec
