@@ -25,6 +25,8 @@
       :loading="isAnalyzing && !isStreaming"
       :streaming="isStreaming"
       :stream-content="streamContent"
+      :audio-blob="lastAudioBlob"
+      :audio-file-name="lastAudioFileName"
       @restart="reset"
       @retry="handleRetry"
       @regenerate="handleRegenerate"
@@ -60,6 +62,8 @@ const isCreatingQuestion = ref(false)
 const isStreaming = ref(false)
 const streamContent = ref('')
 const lastAnswerId = ref<number | null>(null)
+const lastAudioBlob = ref<Blob | null>(null)
+const lastAudioFileName = ref('')
 
 async function handleRandom(category?: string) {
   try {
@@ -99,7 +103,9 @@ async function handleCustom(data: { content: string, category: string }) {
   }
 }
 
-async function handleComplete(data: { transcript: string; duration: number }) {
+async function handleComplete(data: { transcript: string; duration: number; audioBlob: Blob | null; audioFileName: string }) {
+  lastAudioBlob.value = data.audioBlob
+  lastAudioFileName.value = data.audioFileName
   step.value = 'result'
   isAnalyzing.value = true
   isStreaming.value = true
@@ -213,6 +219,8 @@ function reset() {
   currentQuestion.value = null
   analysisResult.value = null
   isAnalyzing.value = false
+  lastAudioBlob.value = null
+  lastAudioFileName.value = ''
 }
 
 function handleRetry() {
@@ -220,6 +228,8 @@ function handleRetry() {
   isAnalyzing.value = false
   isStreaming.value = false
   streamContent.value = ''
+  lastAudioBlob.value = null
+  lastAudioFileName.value = ''
   step.value = 'answer'
 }
 

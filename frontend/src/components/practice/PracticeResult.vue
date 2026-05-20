@@ -20,6 +20,7 @@
     </div>
 
     <div class="result-actions">
+      <el-button v-if="audioBlob" @click="downloadRecording">下载录音</el-button>
       <el-button @click="emit('regenerate')" :disabled="streaming || loading">重新生成</el-button>
       <el-button @click="emit('retry')" :disabled="streaming">再次练习</el-button>
       <el-button @click="emit('restart')" :disabled="streaming">换题练习</el-button>
@@ -31,6 +32,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import type { AnalysisResult } from '@/api/answers'
 
 const props = defineProps<{
@@ -38,6 +40,8 @@ const props = defineProps<{
   loading: boolean
   streaming?: boolean
   streamContent?: string
+  audioBlob?: Blob | null
+  audioFileName?: string
 }>()
 
 const emit = defineEmits<{
@@ -85,6 +89,23 @@ const streamHtml = computed(() => {
     .replace(/^-\s+(.*)/gm, '<li>$1</li>')
     .replace(/\n/g, '<br>')
 })
+
+function downloadRecording() {
+  if (!props.audioBlob) {
+    ElMessage.warning('暂无可下载的录音')
+    return
+  }
+
+  const url = URL.createObjectURL(props.audioBlob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = props.audioFileName || 'recording.webm'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
+  ElMessage.success('已开始下载录音')
+}
 
 function goHistory() {
   router.push('/history')

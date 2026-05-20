@@ -55,7 +55,7 @@
       <div v-if="recorder.error.value && !recorder.isTranscribing.value" class="transcribe-error">
         <span class="error-text">{{ recorder.error.value }}</span>
         <el-button
-          v-if="recorder.lastAudioBlob.value"
+          v-if="recorder.canRetryTranscribe.value"
           type="warning"
           size="small"
           :loading="recorder.isTranscribing.value"
@@ -64,7 +64,7 @@
           重新转写
         </el-button>
       </div>
-      <div v-if="recorder.lastAudioBlob.value && !isRecording" class="audio-actions">
+      <div v-if="lastRecordingBlob && !isRecording" class="audio-actions">
         <el-button
           type="primary"
           plain
@@ -117,7 +117,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   back: []
-  complete: [data: { transcript: string; duration: number }]
+  complete: [data: { transcript: string; duration: number; audioBlob: Blob | null; audioFileName: string }]
 }>()
 
 const appStore = useAppStore()
@@ -126,6 +126,8 @@ const recorder = useRecorder()
 
 const isRecording = ref(false)
 const transcript = ref('')
+const lastRecordingBlob = ref<Blob | null>(null)
+const lastRecordingFileName = ref('')
 
 const formattedTime = computed(() => timer.formatted.value)
 
@@ -146,6 +148,8 @@ watch(() => recorder.error.value, (err) => {
 async function toggleRecording() {
   if (!isRecording.value) {
     try {
+      lastRecordingBlob.value = null
+      lastRecordingFileName.value = ''
       await recorder.start()
       isRecording.value = true
       timer.start()
@@ -156,8 +160,9 @@ async function toggleRecording() {
     // 先停止计时器，确保时长准确
     isRecording.value = false
     timer.stop()
-    const recordedDuration = timer.seconds.value
     const result = await recorder.stop()
+    lastRecordingBlob.value = result.audioBlob
+    lastRecordingFileName.value = result.audioFileName
     // recorder 内部已经处理了文本追加，直接同步最终值
     transcript.value = recorder.transcript.value
   }
@@ -174,12 +179,16 @@ async function submitAnswer() {
     isRecording.value = false
     timer.stop()
     const result = await recorder.stop()
+    lastRecordingBlob.value = result.audioBlob
+    lastRecordingFileName.value = result.audioFileName
     transcript.value = recorder.transcript.value
   }
 
   emit('complete', {
     transcript: transcript.value,
-    duration: timer.seconds.value
+    duration: timer.seconds.value,
+    audioBlob: lastRecordingBlob.value,
+    audioFileName: lastRecordingFileName.value
   })
 }
 
@@ -191,11 +200,20 @@ async function handleRetryTranscribe() {
 }
 
 function handleDownloadRecording() {
-  if (recorder.downloadLastAudio()) {
-    ElMessage.success('已开始下载录音')
-  } else {
-    ElMessage.warning(recorder.error.value || '暂无可下载的录音')
+  if (!lastRecordingBlob.value) {
+    ElMessage.warning('暂无可下载的录音')
+    return
   }
+
+  const url = URL.createObjectURL(lastRecordingBlob.value)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = lastRecordingFileName.value || 'recording.webm'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
+  ElMessage.success('已开始下载录音')
 }
 
 onMounted(() => {

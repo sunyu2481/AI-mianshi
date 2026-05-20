@@ -209,7 +209,7 @@
           :rows="4"
           placeholder="作答内容..."
         />
-        <div v-if="recorder.lastAudioBlob.value && !practiceStore.isRecording" class="audio-actions">
+        <div v-if="lastRecordingBlob && !practiceStore.isRecording" class="audio-actions">
           <el-button
             type="primary"
             plain
@@ -224,7 +224,7 @@
         <div v-if="recorder.error.value && !recorder.isTranscribing.value" class="transcribe-error">
           <span class="error-text">{{ recorder.error.value }}</span>
           <el-button
-            v-if="recorder.lastAudioBlob.value"
+            v-if="recorder.canRetryTranscribe.value"
             type="warning"
             size="small"
             :loading="recorder.isTranscribing.value"
@@ -273,6 +273,7 @@
       </div>
 
       <div class="result-actions">
+        <el-button v-if="lastRecordingBlob" @click="handleDownloadRecording">下载录音</el-button>
         <el-button @click="handleRegeneratePaperAnalysis" :disabled="isAnalyzing || isStreaming">重新生成</el-button>
         <el-button @click="handleRetry" :disabled="isStreaming">再次练习</el-button>
         <el-button @click="reset" :disabled="isStreaming">换题练习</el-button>
@@ -338,6 +339,8 @@ const activePaperId = ref<number>()
 const activePaperTitle = ref('套卷练习')
 const practiceStartedAt = ref('')
 const resumePaperTimerAfterTranscription = ref(false)
+const lastRecordingBlob = ref<Blob | null>(null)
+const lastRecordingFileName = ref('')
 let paperSearchTimer: number | undefined
 
 // 安全的 HTML 输出 (防 XSS)
@@ -566,6 +569,8 @@ function startPractice(
   isAnalyzing.value = false
   isStreaming.value = false
   resumePaperTimerAfterTranscription.value = false
+  lastRecordingBlob.value = null
+  lastRecordingFileName.value = ''
 
   // 初始化每题答案
   paperAnswers.value = questions.map(q => ({
@@ -643,6 +648,8 @@ function saveCurrentAnswer() {
 async function toggleRecording() {
   if (!practiceStore.isRecording) {
     try {
+      lastRecordingBlob.value = null
+      lastRecordingFileName.value = ''
       await recorder.start()
       practiceStore.isRecording = true
       questionTimer.start()
@@ -656,6 +663,8 @@ async function toggleRecording() {
     pausePaperTimerForTranscription()
     try {
       const result = await recorder.stop()
+      lastRecordingBlob.value = result.audioBlob
+      lastRecordingFileName.value = result.audioFileName
 
       if (result.transcript) {
         currentTranscript.value += result.transcript
@@ -680,11 +689,20 @@ async function handleRetryTranscribe() {
 }
 
 function handleDownloadRecording() {
-  if (recorder.downloadLastAudio()) {
-    ElMessage.success('已开始下载录音')
-  } else {
-    ElMessage.warning(recorder.error.value || '暂无可下载的录音')
+  if (!lastRecordingBlob.value) {
+    ElMessage.warning('暂无可下载的录音')
+    return
   }
+
+  const url = URL.createObjectURL(lastRecordingBlob.value)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = lastRecordingFileName.value || 'recording.webm'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
+  ElMessage.success('已开始下载录音')
 }
 
 // 确认结束
@@ -719,6 +737,8 @@ async function finishPractice() {
     questionTimer.pause()
     paperTimer.pause()
     const result = await recorder.stop()
+    lastRecordingBlob.value = result.audioBlob
+    lastRecordingFileName.value = result.audioFileName
     if (result.transcript) {
       currentTranscript.value += result.transcript
     }
@@ -867,6 +887,8 @@ function reset() {
   activePaperTitle.value = '套卷练习'
   practiceStartedAt.value = ''
   resumePaperTimerAfterTranscription.value = false
+  lastRecordingBlob.value = null
+  lastRecordingFileName.value = ''
 }
 
 // 再次练习（保留题目，重置状态）

@@ -1,10 +1,12 @@
-import { ref, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import { useAppStore } from '@/store/app'
 import request from '@/api/request'
 
 export interface RecorderResult {
   transcript: string
   duration: number
+  audioBlob: Blob | null
+  audioFileName: string
 }
 
 export function useRecorder() {
@@ -17,6 +19,10 @@ export function useRecorder() {
   const isTranscribing = ref(false)
   const lastAudioBlob = ref<Blob | null>(null)
   const lastAudioFileName = ref('')
+  const canRetryTranscribe = computed(() => {
+    const provider = appStore.speechConfig?.provider || 'web_speech'
+    return provider !== 'web_speech' && !!lastAudioBlob.value
+  })
 
   let recognition: SpeechRecognition | null = null
   let mediaRecorder: MediaRecorder | null = null
@@ -98,7 +104,7 @@ export function useRecorder() {
 
       if (!recognition) {
         isRecording.value = false
-        resolve({ transcript: transcript.value, duration })
+        resolve({ transcript: transcript.value, duration, audioBlob: lastAudioBlob.value, audioFileName: lastAudioFileName.value })
         return
       }
 
@@ -106,7 +112,7 @@ export function useRecorder() {
       const timeout = setTimeout(() => {
         isRecording.value = false
         recognition = null
-        resolve({ transcript: transcript.value, duration })
+        resolve({ transcript: transcript.value, duration, audioBlob: lastAudioBlob.value, audioFileName: lastAudioFileName.value })
       }, 3000)
 
       // 等待 onend 事件，确保所有 pending 的 onresult 已触发
@@ -114,14 +120,14 @@ export function useRecorder() {
         clearTimeout(timeout)
         isRecording.value = false
         recognition = null
-        resolve({ transcript: transcript.value, duration })
+        resolve({ transcript: transcript.value, duration, audioBlob: lastAudioBlob.value, audioFileName: lastAudioFileName.value })
       }
 
       recognition.stop()
     })
   }
 
-  // 使用 MediaRecorder 录音（用于 Whisper API）
+  // 使用 MediaRecorder 生成可下载音频
   async function startMediaRecorder(): Promise<void> {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -148,11 +154,11 @@ export function useRecorder() {
     }
   }
 
-  // 停止 MediaRecorder 并上传到 Whisper API
-  async function stopMediaRecorder(): Promise<RecorderResult> {
+  // 停止 MediaRecorder，可选择是否上传到 Whisper API
+  async function stopMediaRecorder(transcribe = true): Promise<RecorderResult> {
     return new Promise(async (resolve) => {
-      if (!mediaRecorder) {
-        resolve({ transcript: '', duration: 0 })
+      if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+        resolve({ transcript: '', duration: 0, audioBlob: lastAudioBlob.value, audioFileName: lastAudioFileName.value })
         return
       }
 
@@ -166,10 +172,17 @@ export function useRecorder() {
         mediaRecorder = null
         isRecording.value = false
 
+        const savedAudioBlob = audioBlob.size > 0 ? audioBlob : null
+        const audioFileName = savedAudioBlob ? createAudioFileName() : ''
         // 保存音频 Blob 供重试和下载使用
-        if (audioBlob.size > 0) {
-          lastAudioBlob.value = audioBlob
-          lastAudioFileName.value = createAudioFileName()
+        if (savedAudioBlob) {
+          lastAudioBlob.value = savedAudioBlob
+          lastAudioFileName.value = audioFileName
+        }
+
+        if (!transcribe) {
+          resolve({ transcript: '', duration, audioBlob: savedAudioBlob, audioFileName })
+          return
         }
 
         // 上传到 Whisper API
@@ -192,16 +205,16 @@ export function useRecorder() {
 
             transcript.value = sessionBaseText + response.transcript
             error.value = null
-            resolve({ transcript: response.transcript, duration })
+            resolve({ transcript: response.transcript, duration, audioBlob: savedAudioBlob, audioFileName })
           } catch (e: unknown) {
             const axiosError = e as { response?: { data?: { detail?: string } } }
             error.value = axiosError.response?.data?.detail || '转写失败'
-            resolve({ transcript: '', duration })
+            resolve({ transcript: '', duration, audioBlob: savedAudioBlob, audioFileName })
           } finally {
             isTranscribing.value = false
           }
         } else {
-          resolve({ transcript: '', duration })
+          resolve({ transcript: '', duration, audioBlob: savedAudioBlob, audioFileName })
         }
       }
 
@@ -216,7 +229,13 @@ export function useRecorder() {
     const provider = appStore.speechConfig?.provider || 'web_speech'
 
     if (provider === 'web_speech') {
-      await startWebSpeech()
+      await startMediaRecorder()
+      try {
+        await startWebSpeech()
+      } catch (e) {
+        await stopMediaRecorder(false)
+        throw e
+      }
     } else {
       await startMediaRecorder()
     }
@@ -227,7 +246,13 @@ export function useRecorder() {
     const provider = appStore.speechConfig?.provider || 'web_speech'
 
     if (provider === 'web_speech') {
-      return stopWebSpeech()
+      const result = await stopWebSpeech()
+      const audioResult = await stopMediaRecorder(false)
+      return {
+        ...result,
+        audioBlob: audioResult.audioBlob,
+        audioFileName: audioResult.audioFileName
+      }
     } else {
       return await stopMediaRecorder()
     }
@@ -237,6 +262,11 @@ export function useRecorder() {
   async function retryTranscribe(): Promise<string> {
     if (!lastAudioBlob.value) {
       error.value = '没有可重试的录音数据'
+      return ''
+    }
+
+    if (!canRetryTranscribe.value) {
+      error.value = '当前语音模式不支持重新转写'
       return ''
     }
 
@@ -310,6 +340,8 @@ export function useRecorder() {
     transcript,
     error,
     lastAudioBlob,
+    lastAudioFileName,
+    canRetryTranscribe,
     start,
     stop,
     retryTranscribe,
