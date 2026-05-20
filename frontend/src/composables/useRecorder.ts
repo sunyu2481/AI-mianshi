@@ -16,12 +16,18 @@ export function useRecorder() {
   const error = ref<string | null>(null)
   const isTranscribing = ref(false)
   const lastAudioBlob = ref<Blob | null>(null)
+  const lastAudioFileName = ref('')
 
   let recognition: SpeechRecognition | null = null
   let mediaRecorder: MediaRecorder | null = null
   let audioChunks: Blob[] = []
   let startTime: number = 0
   let sessionBaseText: string = ''
+
+  function createAudioFileName() {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    return `recording-${timestamp}.webm`
+  }
 
   // 检查浏览器支持
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
@@ -123,6 +129,8 @@ export function useRecorder() {
         mimeType: 'audio/webm;codecs=opus'
       })
       audioChunks = []
+      lastAudioBlob.value = null
+      lastAudioFileName.value = ''
       sessionBaseText = transcript.value
 
       mediaRecorder.ondataavailable = (event) => {
@@ -158,9 +166,10 @@ export function useRecorder() {
         mediaRecorder = null
         isRecording.value = false
 
-        // 保存音频 Blob 供重试使用
+        // 保存音频 Blob 供重试和下载使用
         if (audioBlob.size > 0) {
           lastAudioBlob.value = audioBlob
+          lastAudioFileName.value = createAudioFileName()
         }
 
         // 上传到 Whisper API
@@ -261,6 +270,23 @@ export function useRecorder() {
     }
   }
 
+  function downloadLastAudio(): boolean {
+    if (!lastAudioBlob.value) {
+      error.value = '没有可下载的录音数据'
+      return false
+    }
+
+    const url = URL.createObjectURL(lastAudioBlob.value)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = lastAudioFileName.value || createAudioFileName()
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+    return true
+  }
+
   // 清除错误
   function clearError() {
     error.value = null
@@ -287,6 +313,7 @@ export function useRecorder() {
     start,
     stop,
     retryTranscribe,
+    downloadLastAudio,
     clearError
   }
 }

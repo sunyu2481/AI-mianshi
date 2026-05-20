@@ -209,6 +209,17 @@
           :rows="4"
           placeholder="作答内容..."
         />
+        <div v-if="recorder.lastAudioBlob.value && !practiceStore.isRecording" class="audio-actions">
+          <el-button
+            type="primary"
+            plain
+            size="small"
+            :disabled="recorder.isTranscribing.value"
+            @click="handleDownloadRecording"
+          >
+            下载录音
+          </el-button>
+        </div>
         <!-- 转写错误提示与重试 -->
         <div v-if="recorder.error.value && !recorder.isTranscribing.value" class="transcribe-error">
           <span class="error-text">{{ recorder.error.value }}</span>
@@ -665,6 +676,14 @@ async function handleRetryTranscribe() {
     }
   } finally {
     resumePaperTimerIfNeeded()
+  }
+}
+
+function handleDownloadRecording() {
+  if (recorder.downloadLastAudio()) {
+    ElMessage.success('已开始下载录音')
+  } else {
+    ElMessage.warning(recorder.error.value || '暂无可下载的录音')
   }
 }
 
@@ -1231,5 +1250,9 @@ onUnmounted(() => {
   color: #f56c6c;
   font-size: 14px;
   flex: 1;
+}
+
+.audio-actions {
+  margin-top: 8px;
 }
 </style>

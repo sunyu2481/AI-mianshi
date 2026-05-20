@@ -64,6 +64,17 @@
           重新转写
         </el-button>
       </div>
+      <div v-if="recorder.lastAudioBlob.value && !isRecording" class="audio-actions">
+        <el-button
+          type="primary"
+          plain
+          size="small"
+          :disabled="recorder.isTranscribing.value"
+          @click="handleDownloadRecording"
+        >
+          下载录音
+        </el-button>
+      </div>
       <el-input
         v-model="transcript"
         type="textarea"
@@ -176,6 +187,14 @@ async function handleRetryTranscribe() {
   const result = await recorder.retryTranscribe()
   if (result) {
     transcript.value = recorder.transcript.value
+  }
+}
+
+function handleDownloadRecording() {
+  if (recorder.downloadLastAudio()) {
+    ElMessage.success('已开始下载录音')
+  } else {
+    ElMessage.warning(recorder.error.value || '暂无可下载的录音')
   }
 }
 
@@ -301,6 +320,10 @@ onMounted(() => {
   color: #f56c6c;
   font-size: 14px;
   flex: 1;
+}
+
+.audio-actions {
+  margin-bottom: 8px;
 }
 
 .record-hint {
