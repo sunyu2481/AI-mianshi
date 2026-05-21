@@ -27,6 +27,8 @@
       :stream-content="streamContent"
       :audio-blob="lastAudioBlob"
       :audio-file-name="lastAudioFileName"
+      :video-blob="lastVideoBlob"
+      :video-file-name="lastVideoFileName"
       @restart="reset"
       @retry="handleRetry"
       @regenerate="handleRegenerate"
@@ -64,6 +66,8 @@ const streamContent = ref('')
 const lastAnswerId = ref<number | null>(null)
 const lastAudioBlob = ref<Blob | null>(null)
 const lastAudioFileName = ref('')
+const lastVideoBlob = ref<Blob | null>(null)
+const lastVideoFileName = ref('')
 
 async function handleRandom(category?: string) {
   try {
@@ -103,9 +107,18 @@ async function handleCustom(data: { content: string, category: string }) {
   }
 }
 
-async function handleComplete(data: { transcript: string; duration: number; audioBlob: Blob | null; audioFileName: string }) {
+async function handleComplete(data: {
+  transcript: string
+  duration: number
+  audioBlob: Blob | null
+  audioFileName: string
+  videoBlob: Blob | null
+  videoFileName: string
+}) {
   lastAudioBlob.value = data.audioBlob
   lastAudioFileName.value = data.audioFileName
+  lastVideoBlob.value = data.videoBlob
+  lastVideoFileName.value = data.videoFileName
   step.value = 'result'
   isAnalyzing.value = true
   isStreaming.value = true
@@ -221,6 +234,8 @@ function reset() {
   isAnalyzing.value = false
   lastAudioBlob.value = null
   lastAudioFileName.value = ''
+  lastVideoBlob.value = null
+  lastVideoFileName.value = ''
 }
 
 function handleRetry() {
@@ -230,6 +245,8 @@ function handleRetry() {
   streamContent.value = ''
   lastAudioBlob.value = null
   lastAudioFileName.value = ''
+  lastVideoBlob.value = null
+  lastVideoFileName.value = ''
   step.value = 'answer'
 }
 

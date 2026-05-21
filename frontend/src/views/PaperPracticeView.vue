@@ -141,6 +141,46 @@
         </div>
       </div>
 
+      <div class="video-record-section">
+        <div class="video-preview-wrapper">
+          <video
+            v-if="videoRecorder.previewStream.value"
+            ref="videoPreviewRef"
+            class="video-preview"
+            autoplay
+            muted
+            playsinline
+          />
+          <div v-else class="video-placeholder">
+            {{ videoRecorder.error.value || '本次练习开始后自动开启视频录制' }}
+          </div>
+        </div>
+        <div class="video-actions">
+          <el-tag :type="videoRecorder.isRecording.value ? 'danger' : (lastVideoBlob ? 'success' : 'info')">
+            {{ videoRecorder.isRecording.value ? '视频录制中' : (lastVideoBlob ? '视频已保存' : '等待录制') }}
+          </el-tag>
+          <el-button
+            v-if="videoRecorder.isRecording.value"
+            size="small"
+            type="danger"
+            plain
+            @click="stopVideoRecording(true)"
+          >
+            停止并保存视频
+          </el-button>
+          <el-button
+            v-else-if="lastVideoBlob"
+            size="small"
+            type="primary"
+            plain
+            @click="handleDownloadVideo"
+          >
+            下载视频
+          </el-button>
+        </div>
+        <p class="video-hint">视频只保存在本机，不会上传服务器。</p>
+      </div>
+
       <!-- 题目导航 -->
       <div class="question-nav">
         <div
@@ -274,6 +314,7 @@
 
       <div class="result-actions">
         <el-button v-if="lastRecordingBlob" @click="handleDownloadRecording">下载录音</el-button>
+        <el-button v-if="lastVideoBlob" @click="handleDownloadVideo">下载视频</el-button>
         <el-button @click="handleRegeneratePaperAnalysis" :disabled="isAnalyzing || isStreaming">重新生成</el-button>
         <el-button @click="handleRetry" :disabled="isStreaming">再次练习</el-button>
         <el-button @click="reset" :disabled="isStreaming">换题练习</el-button>
@@ -284,7 +325,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowRight, Plus, Microphone, VideoPause, Loading } from '@element-plus/icons-vue'
@@ -292,6 +333,7 @@ import { usePracticeStore } from '@/store/practice'
 import { useAppStore } from '@/store/app'
 import { useTimer } from '@/composables/useTimer'
 import { useRecorder } from '@/composables/useRecorder'
+import { useVideoRecorder } from '@/composables/useVideoRecorder'
 import { paperApi, type Paper } from '@/api/papers'
 import { questionApi, type Question } from '@/api/questions'
 import { answerApi } from '@/api/answers'
@@ -303,6 +345,7 @@ const appStore = useAppStore()
 const paperTimer = useTimer('countdown', 0)
 const questionTimer = useTimer('countup')
 const recorder = useRecorder()
+const videoRecorder = useVideoRecorder()
 
 interface PracticePaperAnswer {
   questionId: number
@@ -341,7 +384,11 @@ const practiceStartedAt = ref('')
 const resumePaperTimerAfterTranscription = ref(false)
 const lastRecordingBlob = ref<Blob | null>(null)
 const lastRecordingFileName = ref('')
+const lastVideoBlob = ref<Blob | null>(null)
+const lastVideoFileName = ref('')
+const videoPreviewRef = ref<HTMLVideoElement | null>(null)
 let paperSearchTimer: number | undefined
+let shouldRecordVideo = false
 
 // 安全的 HTML 输出 (防 XSS)
 const safeAnalysisHtml = computed(() => {
@@ -375,6 +422,13 @@ const streamHtml = computed(() => {
     .replace(/\n/g, '<br>')
 })
 
+watch(() => videoRecorder.previewStream.value, async (stream) => {
+  await nextTick()
+  if (videoPreviewRef.value) {
+    videoPreviewRef.value.srcObject = stream
+  }
+}, { immediate: true })
+
 // 格式化时间
 function formatTime(seconds: number | undefined): string {
   if (!seconds) return '无限制'
@@ -389,6 +443,46 @@ function getDefaultPracticeMinutes(seconds?: number): number {
 
 function getTotalDurationSeconds(): number {
   return paperAnswers.value.reduce((total, answer) => total + (answer.duration || 0), 0)
+}
+
+async function startVideoRecording() {
+  shouldRecordVideo = true
+  if (videoRecorder.isRecording.value) {
+    return
+  }
+
+  try {
+    await videoRecorder.start()
+    if (!shouldRecordVideo || step.value !== 'practice') {
+      await stopVideoRecording(false)
+    }
+  } catch {
+    shouldRecordVideo = false
+    ElMessage.warning('无法启动视频录制，仍可继续练习')
+  }
+}
+
+async function stopVideoRecording(download = true) {
+  shouldRecordVideo = false
+  if (!videoRecorder.isRecording.value) {
+    return
+  }
+
+  const result = await videoRecorder.stop(download)
+  lastVideoBlob.value = result.videoBlob
+  lastVideoFileName.value = result.videoFileName
+
+  if (download && result.videoBlob) {
+    ElMessage.success('已开始下载视频')
+  }
+}
+
+function handleDownloadVideo() {
+  if (videoRecorder.downloadLastVideo()) {
+    ElMessage.success('已开始下载视频')
+  } else {
+    ElMessage.warning(videoRecorder.error.value || '暂无可下载的视频')
+  }
 }
 
 function preparePracticeStart(
@@ -571,6 +665,8 @@ function startPractice(
   resumePaperTimerAfterTranscription.value = false
   lastRecordingBlob.value = null
   lastRecordingFileName.value = ''
+  lastVideoBlob.value = null
+  lastVideoFileName.value = ''
 
   // 初始化每题答案
   paperAnswers.value = questions.map(q => ({
@@ -585,6 +681,7 @@ function startPractice(
   questionTimer.reset()
 
   step.value = 'practice'
+  void startVideoRecording()
 }
 
 // 获取当前题目
@@ -744,6 +841,8 @@ async function finishPractice() {
     }
   }
 
+  await stopVideoRecording(true)
+
   // 保存当前答案
   saveCurrentAnswer()
   paperTimer.stop()
@@ -875,6 +974,7 @@ async function startPaperStreamAnalysis(sessionId: string) {
 
 // 重置
 function reset() {
+  void stopVideoRecording(false)
   practiceStore.resetPaper()
   paperTimer.reset()
   questionTimer.reset()
@@ -889,6 +989,8 @@ function reset() {
   resumePaperTimerAfterTranscription.value = false
   lastRecordingBlob.value = null
   lastRecordingFileName.value = ''
+  lastVideoBlob.value = null
+  lastVideoFileName.value = ''
 }
 
 // 再次练习（保留题目，重置状态）
@@ -958,6 +1060,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.clearTimeout(paperSearchTimer)
+  void stopVideoRecording(false)
 })
 </script>
 
@@ -1076,6 +1179,50 @@ onUnmounted(() => {
 .start-config-question-content {
   color: #303133;
   white-space: pre-wrap;
+}
+
+.video-record-section {
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.video-preview-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #1f2d3d;
+}
+
+.video-preview {
+  width: 100%;
+  max-height: 320px;
+  object-fit: cover;
+}
+
+.video-placeholder {
+  color: #c0c4cc;
+  font-size: 14px;
+}
+
+.video-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.video-hint {
+  margin: 8px 0 0;
+  text-align: center;
+  color: #909399;
+  font-size: 13px;
 }
 
 .question-nav {

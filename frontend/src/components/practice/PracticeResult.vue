@@ -21,6 +21,7 @@
 
     <div class="result-actions">
       <el-button v-if="audioBlob" @click="downloadRecording">下载录音</el-button>
+      <el-button v-if="videoBlob" @click="downloadVideo">下载视频</el-button>
       <el-button @click="emit('regenerate')" :disabled="streaming || loading">重新生成</el-button>
       <el-button @click="emit('retry')" :disabled="streaming">再次练习</el-button>
       <el-button @click="emit('restart')" :disabled="streaming">换题练习</el-button>
@@ -42,6 +43,8 @@ const props = defineProps<{
   streamContent?: string
   audioBlob?: Blob | null
   audioFileName?: string
+  videoBlob?: Blob | null
+  videoFileName?: string
 }>()
 
 const emit = defineEmits<{
@@ -105,6 +108,23 @@ function downloadRecording() {
   link.remove()
   setTimeout(() => URL.revokeObjectURL(url), 0)
   ElMessage.success('已开始下载录音')
+}
+
+function downloadVideo() {
+  if (!props.videoBlob) {
+    ElMessage.warning('暂无可下载的视频')
+    return
+  }
+
+  const url = URL.createObjectURL(props.videoBlob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = props.videoFileName || 'interview-recording.webm'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
+  ElMessage.success('已开始下载视频')
 }
 
 function goHistory() {

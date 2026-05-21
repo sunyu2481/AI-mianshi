@@ -5,7 +5,7 @@
         <el-tag v-if="question?.category" type="info">
           {{ question.category }}
         </el-tag>
-        <el-button text @click="emit('back')">
+        <el-button text @click="handleBack">
           <el-icon><Back /></el-icon>
           返回选题
         </el-button>
@@ -21,6 +21,46 @@
       <span class="timer-display" :class="{ recording: isRecording }">
         {{ formattedTime }}
       </span>
+    </div>
+
+    <div class="video-record-section">
+      <div class="video-preview-wrapper">
+        <video
+          v-if="videoRecorder.previewStream.value"
+          ref="videoPreviewRef"
+          class="video-preview"
+          autoplay
+          muted
+          playsinline
+        />
+        <div v-else class="video-placeholder">
+          {{ videoRecorder.error.value || '点击开始作答后自动开启视频录制' }}
+        </div>
+      </div>
+      <div class="video-actions">
+        <el-tag :type="videoRecorder.isRecording.value ? 'danger' : (lastVideoBlob ? 'success' : 'info')">
+          {{ videoRecorder.isRecording.value ? '视频录制中' : (lastVideoBlob ? '视频已保存' : '等待录制') }}
+        </el-tag>
+        <el-button
+          v-if="videoRecorder.isRecording.value"
+          size="small"
+          type="danger"
+          plain
+          @click="stopVideoRecording(true)"
+        >
+          停止并保存视频
+        </el-button>
+        <el-button
+          v-else-if="lastVideoBlob"
+          size="small"
+          type="primary"
+          plain
+          @click="handleDownloadVideo"
+        >
+          下载视频
+        </el-button>
+      </div>
+      <p class="video-hint">视频只保存在本机，不会上传服务器。</p>
     </div>
 
     <!-- 录音控制 -->
@@ -85,7 +125,7 @@
 
     <!-- 操作按钮 -->
     <div class="action-buttons">
-      <el-button @click="emit('back')">取消</el-button>
+      <el-button @click="handleBack">取消</el-button>
       <el-button
         type="primary"
         @click="submitAnswer"
@@ -98,11 +138,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Microphone, VideoPause, Back, Loading } from '@element-plus/icons-vue'
 import { useTimer } from '@/composables/useTimer'
 import { useRecorder } from '@/composables/useRecorder'
+import { useVideoRecorder } from '@/composables/useVideoRecorder'
 import { useAppStore } from '@/store/app'
 
 export interface Question {
@@ -117,17 +158,28 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   back: []
-  complete: [data: { transcript: string; duration: number; audioBlob: Blob | null; audioFileName: string }]
+  complete: [data: {
+    transcript: string
+    duration: number
+    audioBlob: Blob | null
+    audioFileName: string
+    videoBlob: Blob | null
+    videoFileName: string
+  }]
 }>()
 
 const appStore = useAppStore()
 const timer = useTimer('countup')
 const recorder = useRecorder()
+const videoRecorder = useVideoRecorder()
 
 const isRecording = ref(false)
 const transcript = ref('')
 const lastRecordingBlob = ref<Blob | null>(null)
 const lastRecordingFileName = ref('')
+const lastVideoBlob = ref<Blob | null>(null)
+const lastVideoFileName = ref('')
+const videoPreviewRef = ref<HTMLVideoElement | null>(null)
 
 const formattedTime = computed(() => timer.formatted.value)
 
@@ -138,6 +190,13 @@ watch(() => recorder.transcript.value, (val) => {
   }
 })
 
+watch(() => videoRecorder.previewStream.value, async (stream) => {
+  await nextTick()
+  if (videoPreviewRef.value) {
+    videoPreviewRef.value.srcObject = stream
+  }
+}, { immediate: true })
+
 // 监听录音错误
 watch(() => recorder.error.value, (err) => {
   if (err) {
@@ -145,26 +204,60 @@ watch(() => recorder.error.value, (err) => {
   }
 })
 
+async function startVideoRecording() {
+  if (videoRecorder.isRecording.value) {
+    return true
+  }
+
+  try {
+    await videoRecorder.start()
+    return true
+  } catch {
+    ElMessage.warning('无法启动视频录制，仍可继续作答')
+    return false
+  }
+}
+
+async function stopVideoRecording(download = true) {
+  if (!videoRecorder.isRecording.value) {
+    return
+  }
+
+  const result = await videoRecorder.stop(download)
+  lastVideoBlob.value = result.videoBlob
+  lastVideoFileName.value = result.videoFileName
+
+  if (download && result.videoBlob) {
+    ElMessage.success('已开始下载视频')
+  }
+}
+
 async function toggleRecording() {
   if (!isRecording.value) {
+    let videoStarted = false
     try {
       lastRecordingBlob.value = null
       lastRecordingFileName.value = ''
+      lastVideoBlob.value = null
+      lastVideoFileName.value = ''
+      videoStarted = await startVideoRecording()
       await recorder.start()
       isRecording.value = true
       timer.start()
     } catch (e) {
+      if (videoStarted) {
+        await stopVideoRecording(false)
+      }
       ElMessage.error('无法启动录音，请检查麦克风权限')
     }
   } else {
-    // 先停止计时器，确保时长准确
     isRecording.value = false
     timer.stop()
     const result = await recorder.stop()
     lastRecordingBlob.value = result.audioBlob
     lastRecordingFileName.value = result.audioFileName
-    // recorder 内部已经处理了文本追加，直接同步最终值
     transcript.value = recorder.transcript.value
+    await stopVideoRecording(true)
   }
 }
 
@@ -175,7 +268,6 @@ async function submitAnswer() {
   }
 
   if (isRecording.value) {
-    // 先停止计时器，确保时长准确
     isRecording.value = false
     timer.stop()
     const result = await recorder.stop()
@@ -184,11 +276,15 @@ async function submitAnswer() {
     transcript.value = recorder.transcript.value
   }
 
+  await stopVideoRecording(true)
+
   emit('complete', {
     transcript: transcript.value,
     duration: timer.seconds.value,
     audioBlob: lastRecordingBlob.value,
-    audioFileName: lastRecordingFileName.value
+    audioFileName: lastRecordingFileName.value,
+    videoBlob: lastVideoBlob.value,
+    videoFileName: lastVideoFileName.value
   })
 }
 
@@ -214,6 +310,20 @@ function handleDownloadRecording() {
   link.remove()
   setTimeout(() => URL.revokeObjectURL(url), 0)
   ElMessage.success('已开始下载录音')
+}
+
+function handleDownloadVideo() {
+  if (videoRecorder.downloadLastVideo()) {
+    ElMessage.success('已开始下载视频')
+  } else {
+    ElMessage.warning(videoRecorder.error.value || '暂无可下载的视频')
+  }
+}
+
+async function handleBack() {
+  timer.stop()
+  await stopVideoRecording(false)
+  emit('back')
 }
 
 onMounted(() => {
@@ -262,6 +372,50 @@ onMounted(() => {
 
 .timer-display.recording {
   color: #f56c6c;
+}
+
+.video-record-section {
+  margin: 24px 0;
+  padding: 16px;
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.video-preview-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #1f2d3d;
+}
+
+.video-preview {
+  width: 100%;
+  max-height: 320px;
+  object-fit: cover;
+}
+
+.video-placeholder {
+  color: #c0c4cc;
+  font-size: 14px;
+}
+
+.video-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.video-hint {
+  margin: 8px 0 0;
+  text-align: center;
+  color: #909399;
+  font-size: 13px;
 }
 
 .record-section {
